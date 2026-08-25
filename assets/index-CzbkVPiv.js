@@ -73,6 +73,10 @@ class AmbientBed extends AudioWorkletProcessor {
     super()
     const sr = sampleRate
 
+    // xorshift32. Math.random() was called up to ~10x per sample; V8 refills a
+    // small internal cache in bursts, which costs more AND has its own period.
+    this.rs = (Math.random() * 4294967296) | 0 || 22222
+
     // Smoothed layer gains. Params are k-rate (one value per 128-sample block);
     // smoothing per sample stops slider moves producing zipper noise.
     this.g = { rain: 0, brown: 0, fire: 0, fan: 0 }
@@ -80,11 +84,11 @@ class AmbientBed extends AudioWorkletProcessor {
 
     // --- per-channel bed state (independent noise = decorrelated = wide) ---
     this.st = [0, 1].map(() => ({
-      brown: 0, brownDcX: 0, brownDcY: 0,
       rainLp: 0, rainHpLp: 0,
       fanLp: 0, fanHp: 0,
-      rumble: 0, rumbleLp: 0,
     }))
+    // Low-frequency content is mono: one shared state, not one per channel.
+    this.mono = { brown: 0, brownDcX: 0, brownDcY: 0, rumble: 0, rumbleLp: 0 }
 
     // One-pole coefficients: a = 1 - exp(-2*pi*f/sr)
     const pole = (f) => 1 - Math.exp((-2 * Math.PI * f) / sr)
@@ -98,16 +102,30 @@ class AmbientBed extends AudioWorkletProcessor {
     this.rainVoices = Array.from({ length: 28 }, () => new Voice())
     this.fireVoices = Array.from({ length: 14 }, () => new Voice())
 
-    // Slow movement so beds breathe instead of sitting perfectly static.
-    this.lfo = 0
-    this.lfoInc = (2 * Math.PI * 0.11) / sr   // fan airflow
-    this.flicker = 0
-    this.flickerInc = (2 * Math.PI * 0.27) / sr // fire breathing
+    // Slow movement so beds breathe instead of sitting static — as a random
+    // WALK, not a sine. Updated once per render block (~2.7ms), which is far
+    // faster than these drift, and costs nothing per sample.
+    this.mFan = 0
+    this.mFlame = 0
+    this.phiFan = Math.exp(-128 / (7.0 * sr))   // ~7s drift
+    this.phiFlame = Math.exp(-128 / (1.2 * sr)) // ~1.2s flicker
+    this.airflow = 1
+    this.flame = 1
 
     this.alive = true
     this.port.onmessage = (event) => {
       if (event.data === 'stop') this.alive = false
     }
+  }
+
+  // Uniform [0,1).
+  rand() {
+    let s = this.rs
+    s ^= s << 13
+    s ^= s >>> 17
+    s ^= s << 5
+    this.rs = s
+    return (s >>> 0) * 2.3283064365386963e-10
   }
 
   spawn(pool, freq, q, decay, amp, pan) {
@@ -134,6 +152,13 @@ class AmbientBed extends AudioWorkletProcessor {
       fan: params.fan[0],
     }
 
+    // Block-rate modulator update. Sum of three uniforms ~ unit-variance noise.
+    const gauss = () => this.rand() * 2 - 1 + (this.rand() * 2 - 1) + (this.rand() * 2 - 1)
+    this.mFan = this.phiFan * this.mFan + Math.sqrt(1 - this.phiFan * this.phiFan) * gauss()
+    this.mFlame = this.phiFlame * this.mFlame + Math.sqrt(1 - this.phiFlame * this.phiFlame) * gauss()
+    const airflow = 0.92 + 0.08 * Math.max(-3, Math.min(3, this.mFan)) / 3
+    const flame = 0.80 + 0.20 * Math.max(-3, Math.min(3, this.mFlame)) / 3
+
     for (let i = 0; i < n; i += 1) {
       // Glide gains toward their targets.
       this.g.rain += (target.rain - this.g.rain) * this.gCoef
@@ -146,11 +171,6 @@ class AmbientBed extends AudioWorkletProcessor {
       const gFire = this.g.fire
       const gFan = this.g.fan
 
-      this.lfo += this.lfoInc
-      this.flicker += this.flickerInc
-      const airflow = 0.92 + 0.08 * Math.sin(this.lfo)
-      const flame = 0.78 + 0.22 * Math.sin(this.flicker)
-
       // ---- transient voices (mono, panned) ----
       let voiceL = 0
       let voiceR = 0
@@ -158,17 +178,17 @@ class AmbientBed extends AudioWorkletProcessor {
       if (gRain > 0.001) {
         // Patter density scales with the slider: light rain -> heavy downpour.
         const rate = 24 + 150 * gRain
-        if (Math.random() < rate / sr) {
-          const freq = 1100 + Math.random() * 4200
+        if (this.rand() < rate / sr) {
+          const freq = 1100 + this.rand() * 4200
           // Most drops are small; a few are close and fat.
-          const near = Math.random() < 0.12
+          const near = this.rand() < 0.12
           this.spawn(
             this.rainVoices,
             near ? freq * 0.55 : freq,
             near ? 5 : 9,
-            near ? 0.035 + Math.random() * 0.04 : 0.008 + Math.random() * 0.016,
-            (near ? 0.5 : 0.28) * (0.6 + Math.random() * 0.4),
-            Math.random() * 2 - 1,
+            near ? 0.035 + this.rand() * 0.04 : 0.008 + this.rand() * 0.016,
+            (near ? 0.5 : 0.28) * (0.6 + this.rand() * 0.4),
+            this.rand() * 2 - 1,
           )
         }
       }
@@ -176,24 +196,24 @@ class AmbientBed extends AudioWorkletProcessor {
       if (gFire > 0.001) {
         // Many small ticks, occasional bigger pop — that ratio is what reads as
         // a fire rather than static.
-        if (Math.random() < (3 + 16 * gFire) / sr) {
+        if (this.rand() < (3 + 16 * gFire) / sr) {
           this.spawn(
             this.fireVoices,
-            1600 + Math.random() * 3400,
-            7 + Math.random() * 5,
-            0.012 + Math.random() * 0.03,
-            0.22 + Math.random() * 0.3,
-            Math.random() * 2 - 1,
+            1600 + this.rand() * 3400,
+            7 + this.rand() * 5,
+            0.012 + this.rand() * 0.03,
+            0.22 + this.rand() * 0.3,
+            this.rand() * 2 - 1,
           )
         }
-        if (Math.random() < (0.25 + 0.8 * gFire) / sr) {
+        if (this.rand() < (0.25 + 0.8 * gFire) / sr) {
           this.spawn(
             this.fireVoices,
-            320 + Math.random() * 780,
+            320 + this.rand() * 780,
             3.5,
-            0.07 + Math.random() * 0.07,
-            0.5 + Math.random() * 0.35,
-            Math.random() * 1.4 - 0.7,
+            0.07 + this.rand() * 0.07,
+            0.5 + this.rand() * 0.35,
+            this.rand() * 1.4 - 0.7,
           )
         }
       }
@@ -204,33 +224,43 @@ class AmbientBed extends AudioWorkletProcessor {
       for (let v = 0; v < this.rainVoices.length; v += 1) {
         const voice = this.rainVoices[v]
         if (!voice.active) continue
-        const s = voice.tick(Math.random() * 2 - 1) * gRain * MAX.rain
+        const s = voice.tick(this.rand() * 2 - 1) * gRain * MAX.rain
         voiceL += s * voice.panL
         voiceR += s * voice.panR
       }
       for (let v = 0; v < this.fireVoices.length; v += 1) {
         const voice = this.fireVoices[v]
         if (!voice.active) continue
-        const s = voice.tick(Math.random() * 2 - 1) * gFire * MAX.fire
+        const s = voice.tick(this.rand() * 2 - 1) * gFire * MAX.fire
         voiceL += s * voice.panL
         voiceR += s * voice.panR
       }
 
-      // ---- continuous beds, generated per channel ----
+      // ---- low frequency: generated ONCE, shared by both channels ----
+      // Decorrelated bass is swimmy and eats headroom; a solid centre is what
+      // makes brown noise feel like a floor you can rest on.
+      let mono = 0
+      const lfWhite = this.rand() * 2 - 1
+      if (gBrown > 0.001) {
+        const m = this.mono
+        m.brown = (m.brown + 0.02 * lfWhite) / 1.02
+        const dc = m.brown - m.brownDcX + 0.995 * m.brownDcY
+        m.brownDcX = m.brown
+        m.brownDcY = dc
+        mono += dc * 3.2 * MAX.brown * gBrown
+      }
+      if (gFire > 0.001) {
+        const m = this.mono
+        m.rumble = (m.rumble + 0.02 * lfWhite) / 1.02
+        m.rumbleLp += this.aRumbleLp * (m.rumble - m.rumbleLp)
+        mono += m.rumbleLp * 3.4 * MAX.fire * gFire * flame
+      }
+
+      // ---- high frequency beds, per channel (decorrelated = wide) ----
       for (let c = 0; c < 2; c += 1) {
         const st = this.st[c]
-        const white = Math.random() * 2 - 1
-        let sample = 0
-
-        if (gBrown > 0.001) {
-          // Leaky integrator -> ~-6 dB/octave, then a DC blocker so the bed
-          // cannot drift and eat headroom.
-          st.brown = (st.brown + 0.02 * white) / 1.02
-          const dc = st.brown - st.brownDcX + 0.995 * st.brownDcY
-          st.brownDcX = st.brown
-          st.brownDcY = dc
-          sample += dc * 3.2 * MAX.brown * gBrown
-        }
+        const white = this.rand() * 2 - 1
+        let sample = mono
 
         if (gRain > 0.001) {
           // Band-limited hiss behind the droplets: high-passed so it is not
@@ -246,13 +276,6 @@ class AmbientBed extends AudioWorkletProcessor {
           st.fanHp += this.aFanHp * (st.fanLp - st.fanHp)
           const air = st.fanLp - st.fanHp
           sample += air * 1.5 * MAX.fan * gFan * airflow
-        }
-
-        if (gFire > 0.001) {
-          // Low body under the crackles, breathing slowly.
-          st.rumble = (st.rumble + 0.02 * white) / 1.02
-          st.rumbleLp += this.aRumbleLp * (st.rumble - st.rumbleLp)
-          sample += st.rumbleLp * 3.4 * MAX.fire * gFire * flame
         }
 
         sample += c === 0 ? voiceL : voiceR
