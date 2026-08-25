@@ -568,6 +568,29 @@ uniform vec3 uTint;
 uniform float uSoft;
 uniform float uDark;
 uniform float uStir;
+uniform float uTime;
+uniform float uSettle;   // 1 = fully stirred, decays as it comes to rest
+
+float sHash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+// Hundreds of tiny suspended motes for the cost of a few hash lookups. Real
+// flecks are O(n) per pixel; this fills the water between them so the jar looks
+// dense rather than sparse.
+float sparkleField(vec2 uv, float cells, float speed, float phase) {
+  vec2 drift = vec2(sin(uTime * 0.11 + phase) * 0.05, -uTime * speed);
+  vec2 g = (uv + drift) * cells;
+  vec2 id = floor(g);
+  vec2 f = fract(g) - 0.5;
+  float rnd = sHash(id + phase);
+  if (rnd < 0.55) return 0.0;                  // most cells are empty water
+  vec2 off = (vec2(sHash(id + 1.7), sHash(id + 4.3)) - 0.5) * 0.7;
+  float d = length(f - off);
+  // Twinkle: each mote has its own blink rate, so the field shimmers.
+  float tw = 0.45 + 0.55 * sin(uTime * (1.4 + rnd * 3.6) + rnd * 30.0);
+  return smoothstep(0.055, 0.0, d) * tw * (0.35 + rnd * 0.65);
+}
 
 void main() {
   vec2 uv = (gl_FragCoord.xy * 2.0 - uRes) / uRes.y;
@@ -602,6 +625,20 @@ void main() {
     energy += e;
   }
 
+  // Suspended motes at three depths — parallax makes the jar feel deep.
+  float motes =
+      sparkleField(uv, 7.0, 0.012, 0.0) * 0.55 +
+      sparkleField(uv, 12.0, 0.020, 11.3) * 0.38 +
+      sparkleField(uv, 19.0, 0.031, 27.9) * 0.26;
+  // They lift and shimmer harder just after a stir, then settle back.
+  motes *= 0.45 + 0.55 * uSettle;
+  col += mix(uTint, vec3(1.0), 0.55) * motes * 0.9;
+  energy += motes * 0.5;
+
+  // Slow convection so the water is never completely dead.
+  float current = sin(uv.y * 3.0 + uTime * 0.25) * cos(uv.x * 2.4 - uTime * 0.19);
+  col += uTint * 0.035 * (0.5 + 0.5 * current) * (0.3 + 0.7 * uSettle);
+
   // Stir bloom: the liquid brightens faintly while a finger is moving through it.
   col += uTint * 0.09 * uStir * (1.0 - depthWash * 0.4);
 
@@ -609,7 +646,7 @@ void main() {
   col = clamp(col, 0.0, 1.0);
   gl_FragColor = vec4(col * alpha, alpha);
 }
-`;function Gd(){let e=[];for(let t=0;t<Ud;t+=1){let n=t*2.399963;e.push({x:Math.cos(n)*.7*((t%7+1)/8),y:-.74+t%5/5*.42,z:t%11/10,vx:0,vy:0,spin:t%13*.48,spinRate:.6+t%9/9*1.5,size:.02+t%6/6*.022,tone:t%8/8})}return e}function Kd(e){let{active:t,reduceMotion:n,reduceBrightness:r,hapticsEnabled:i,onInteract:a}=e,o=(0,b.useRef)(null),[s,c]=(0,b.useState)(!0),l=(0,b.useRef)({x:0,y:0,down:!1}),u=(0,b.useRef)(Gd()),d=n||!s;if((0,b.useEffect)(()=>{let e=o.current;if(!e||!t||d)return;let n=Sd(e,Wd);if(!n){c(!1);return}let i=new Float32Array(Ud*4),a=new Float32Array(Ud*2);for(let e=0;e<Ud;e+=1)a[e*2]=u.current[e].size,a[e*2+1]=u.current[e].tone;let s=0;return n.start(e=>{let{gl:t,u:o}=n,{width:c,height:d}=n.size();s=l.current.down?Math.min(1,s+e*2.4):s*.94;for(let t=0;t<Ud;t+=1){let n=u.current[t];if(n.vy-=e*(.06+n.size*1.2),l.current.down){let t=n.x-l.current.x,r=n.y-l.current.y,i=Math.hypot(t,r)+.001;if(i<.75){let a=(1-i/.75)*e*5.5;n.vx+=t/i*a,n.vy+=r/i*a+a*.5}}let r=.12**e;n.vx*=r,n.vy*=r,n.x+=n.vx*e*6,n.y+=n.vy*e*6,n.x<-.86&&(n.x=-.86,n.vx=Math.abs(n.vx)*.3),n.x>.86&&(n.x=.86,n.vx=-Math.abs(n.vx)*.3),n.y>.92&&(n.y=.92,n.vy=-Math.abs(n.vy)*.3);let a=-.84+n.z*.05;n.y<a&&(n.y=a,n.vy=Math.abs(n.vy)*.18);let o=Math.hypot(n.vx,n.vy);n.spin+=e*n.spinRate*(.3+o*9),i[t*4]=n.x,i[t*4+1]=n.y,i[t*4+2]=n.z,i[t*4+3]=Math.abs(Math.sin(n.spin))}t.uniform2f(o(`uRes`),c,d),t.uniform4fv(o(`uFleck[0]`),i),t.uniform2fv(o(`uMeta[0]`),a),t.uniform3f(o(`uTint`),.92,.62,.75),t.uniform1f(o(`uSoft`),+!!r),t.uniform1f(o(`uDark`),+!!Z()),t.uniform1f(o(`uStir`),s),t.clearColor(0,0,0,0),t.clear(t.COLOR_BUFFER_BIT)}),()=>n.dispose()},[t,r,d]),d)return(0,H.jsx)(Hd,{...e});let f=e=>{let t=e.currentTarget.getBoundingClientRect();l.current.x=Q((e.clientX-t.left)/t.width*2-1,-1,1)*.9,l.current.y=Q(1-(e.clientY-t.top)/t.height*2,-1,1)*.95};return(0,H.jsxs)(`div`,{className:`canvas-card glitter-jar-card`,children:[(0,H.jsx)(`canvas`,{ref:o,className:`stim3d-canvas`,"aria-label":`Glitter jar. Drag to stir, then watch it settle.`,onPointerDown:e=>{t&&(a?.(`tap`),X(i,12),l.current.down=!0,f(e),e.currentTarget.setPointerCapture(e.pointerId))},onPointerMove:e=>{!t||!l.current.down||f(e)},onPointerUp:()=>{l.current.down=!1},onPointerCancel:()=>{l.current.down=!1}}),(0,H.jsx)(`p`,{children:`Stir it up. Watch it settle.`})]})}var qd=[{count:5,sense:`things you can see`,hue:168},{count:4,sense:`things you can feel`,hue:200},{count:3,sense:`things you can hear`,hue:250},{count:2,sense:`things you can smell`,hue:300},{count:1,sense:`thing you can taste`,hue:20}];function Jd({active:e,hapticsEnabled:t,onInteract:n}){let[r,i]=(0,b.useState)(0),[a,o]=(0,b.useState)(0),[s,c]=(0,b.useState)(!1),l=qd[r];return(0,H.jsx)(`div`,{className:`grounding-card`,"aria-label":`5 4 3 2 1 grounding exercise`,children:s?(0,H.jsxs)(`div`,{className:`grounding-done`,children:[(0,H.jsx)(`strong`,{children:`Grounded.`}),(0,H.jsx)(`p`,{children:`You moved through all five senses. Notice how you feel now.`}),(0,H.jsx)(`button`,{type:`button`,className:`grounding-restart`,onClick:()=>{n?.(`tap`),i(0),o(0),c(!1)},children:`Again`})]}):(0,H.jsxs)(H.Fragment,{children:[(0,H.jsx)(`div`,{className:`grounding-big`,style:{color:`hsl(${l.hue} 55% 42%)`},children:l.count-a}),(0,H.jsxs)(`p`,{className:`grounding-prompt`,children:[`Notice `,(0,H.jsx)(`strong`,{children:l.count-a}),` `,l.sense]}),(0,H.jsx)(`div`,{className:`grounding-dots`,"aria-hidden":`true`,children:Array.from({length:l.count},(e,t)=>(0,H.jsx)(`span`,{className:t<a?`on`:``,style:{"--g-hue":l.hue}},t))}),(0,H.jsx)(`button`,{type:`button`,className:`grounding-tap`,onClick:()=>{if(!e||s)return;n?.(`tap`),X(t,9);let u=a+1;u>=l.count?r+1>=qd.length?(o(u),c(!0),X(t,[14,40,14,40]),n?.(`complete`)):(i(r+1),o(0)):o(u)},children:`Tap as you notice one`}),(0,H.jsx)(`div`,{className:`grounding-progress`,children:qd.map((e,t)=>(0,H.jsx)(`span`,{className:t===r?`active`:t<r?`past`:``},e.count))})]})})}var Yd=[{label:`Inhale`,secs:4},{label:`Hold`,secs:4},{label:`Exhale`,secs:4},{label:`Hold`,secs:4}];function Xd({id:e,active:t,muted:n,hapticsEnabled:r,onInteract:i}){let[a,o]=(0,b.useState)(0);(0,b.useEffect)(()=>{if(!t)return;let{label:i,secs:s}=Yd[a];X(r,i===`Inhale`||i===`Exhale`?[18,50,18]:[12]),!n&&(i===`Inhale`||i===`Exhale`)&&(Y.resume(),Y.tone(e,i===`Inhale`?330:247,.6,.045));let c=window.setTimeout(()=>o(e=>(e+1)%Yd.length),s*1e3);return()=>window.clearTimeout(c)},[t,a,r,e,n]);let{label:s,secs:c}=Yd[a],l=[{left:`0%`,top:`0%`},{left:`100%`,top:`0%`},{left:`100%`,top:`100%`},{left:`0%`,top:`100%`}][(a+1)%4];return(0,H.jsxs)(`div`,{className:`box-breath-card`,onPointerDown:()=>i?.(`tap`),children:[(0,H.jsxs)(`div`,{className:`box-breath-frame`,children:[(0,H.jsx)(`span`,{className:`box-breath-dot`,style:{left:l.left,top:l.top,transitionDuration:`${c}s`}}),(0,H.jsx)(`span`,{className:`box-breath-label`,children:s})]}),(0,H.jsx)(`p`,{children:`Trace the square — in, hold, out, hold.`})]})}var Zd=[{bx:-.3,speed:.16,phase:0,r:.3},{bx:.26,speed:.12,phase:2.1,r:.34},{bx:.02,speed:.2,phase:4.2,r:.22},{bx:-.18,speed:.14,phase:1.3,r:.26},{bx:.34,speed:.18,phase:5.1,r:.2},{bx:-.36,speed:.11,phase:3.4,r:.24}],Qd=`
+`;function Gd(){let e=[];for(let t=0;t<Ud;t+=1){let n=t*2.399963;e.push({x:Math.cos(n)*.7*((t%7+1)/8),y:-.74+t%5/5*.42,z:t%11/10,vx:0,vy:0,spin:t%13*.48,spinRate:.6+t%9/9*1.5,size:.02+t%6/6*.022,tone:t%8/8})}return e}function Kd(e){let{active:t,reduceMotion:n,reduceBrightness:r,hapticsEnabled:i,onInteract:a}=e,o=(0,b.useRef)(null),[s,c]=(0,b.useState)(!0),l=(0,b.useRef)({x:0,y:0,down:!1}),u=(0,b.useRef)(Gd()),d=n||!s;if((0,b.useEffect)(()=>{let e=o.current;if(!e||!t||d)return;let n=Sd(e,Wd);if(!n){c(!1);return}let i=new Float32Array(Ud*4),a=new Float32Array(Ud*2);for(let e=0;e<Ud;e+=1)a[e*2]=u.current[e].size,a[e*2+1]=u.current[e].tone;let s=0,f=0;return n.start((e,t)=>{let{gl:o,u:c}=n,{width:d,height:p}=n.size();s=l.current.down?Math.min(1,s+e*2.4):s*.94,f=l.current.down?1:Math.max(0,f-e*.09);for(let t=0;t<Ud;t+=1){let n=u.current[t];if(n.vy-=e*(.06+n.size*1.2),l.current.down){let t=n.x-l.current.x,r=n.y-l.current.y,i=Math.hypot(t,r)+.001;if(i<.75){let a=(1-i/.75)*e*5.5;n.vx+=t/i*a,n.vy+=r/i*a+a*.5}}let r=.12**e;n.vx*=r,n.vy*=r,n.x+=n.vx*e*6,n.y+=n.vy*e*6,n.x<-.86&&(n.x=-.86,n.vx=Math.abs(n.vx)*.3),n.x>.86&&(n.x=.86,n.vx=-Math.abs(n.vx)*.3),n.y>.92&&(n.y=.92,n.vy=-Math.abs(n.vy)*.3);let a=-.84+n.z*.05;n.y<a&&(n.y=a,n.vy=Math.abs(n.vy)*.18);let o=Math.hypot(n.vx,n.vy);n.spin+=e*n.spinRate*(.3+o*9),i[t*4]=n.x,i[t*4+1]=n.y,i[t*4+2]=n.z,i[t*4+3]=Math.abs(Math.sin(n.spin))}o.uniform2f(c(`uRes`),d,p),o.uniform4fv(c(`uFleck[0]`),i),o.uniform2fv(c(`uMeta[0]`),a),o.uniform3f(c(`uTint`),.92,.62,.75),o.uniform1f(c(`uSoft`),+!!r),o.uniform1f(c(`uDark`),+!!Z()),o.uniform1f(c(`uStir`),s),o.uniform1f(c(`uSettle`),f),o.uniform1f(c(`uTime`),t),o.clearColor(0,0,0,0),o.clear(o.COLOR_BUFFER_BIT)}),()=>n.dispose()},[t,r,d]),d)return(0,H.jsx)(Hd,{...e});let f=e=>{let t=e.currentTarget.getBoundingClientRect();l.current.x=Q((e.clientX-t.left)/t.width*2-1,-1,1)*.9,l.current.y=Q(1-(e.clientY-t.top)/t.height*2,-1,1)*.95};return(0,H.jsxs)(`div`,{className:`canvas-card glitter-jar-card`,children:[(0,H.jsx)(`canvas`,{ref:o,className:`stim3d-canvas`,"aria-label":`Glitter jar. Drag to stir, then watch it settle.`,onPointerDown:e=>{t&&(a?.(`tap`),X(i,12),l.current.down=!0,f(e),e.currentTarget.setPointerCapture(e.pointerId))},onPointerMove:e=>{!t||!l.current.down||f(e)},onPointerUp:()=>{l.current.down=!1},onPointerCancel:()=>{l.current.down=!1}}),(0,H.jsx)(`p`,{children:`Stir it up. Watch it settle.`})]})}var qd=[{count:5,sense:`things you can see`,hue:168},{count:4,sense:`things you can feel`,hue:200},{count:3,sense:`things you can hear`,hue:250},{count:2,sense:`things you can smell`,hue:300},{count:1,sense:`thing you can taste`,hue:20}];function Jd({active:e,hapticsEnabled:t,onInteract:n}){let[r,i]=(0,b.useState)(0),[a,o]=(0,b.useState)(0),[s,c]=(0,b.useState)(!1),l=qd[r];return(0,H.jsx)(`div`,{className:`grounding-card`,"aria-label":`5 4 3 2 1 grounding exercise`,children:s?(0,H.jsxs)(`div`,{className:`grounding-done`,children:[(0,H.jsx)(`strong`,{children:`Grounded.`}),(0,H.jsx)(`p`,{children:`You moved through all five senses. Notice how you feel now.`}),(0,H.jsx)(`button`,{type:`button`,className:`grounding-restart`,onClick:()=>{n?.(`tap`),i(0),o(0),c(!1)},children:`Again`})]}):(0,H.jsxs)(H.Fragment,{children:[(0,H.jsx)(`div`,{className:`grounding-big`,style:{color:`hsl(${l.hue} 55% 42%)`},children:l.count-a}),(0,H.jsxs)(`p`,{className:`grounding-prompt`,children:[`Notice `,(0,H.jsx)(`strong`,{children:l.count-a}),` `,l.sense]}),(0,H.jsx)(`div`,{className:`grounding-dots`,"aria-hidden":`true`,children:Array.from({length:l.count},(e,t)=>(0,H.jsx)(`span`,{className:t<a?`on`:``,style:{"--g-hue":l.hue}},t))}),(0,H.jsx)(`button`,{type:`button`,className:`grounding-tap`,onClick:()=>{if(!e||s)return;n?.(`tap`),X(t,9);let u=a+1;u>=l.count?r+1>=qd.length?(o(u),c(!0),X(t,[14,40,14,40]),n?.(`complete`)):(i(r+1),o(0)):o(u)},children:`Tap as you notice one`}),(0,H.jsx)(`div`,{className:`grounding-progress`,children:qd.map((e,t)=>(0,H.jsx)(`span`,{className:t===r?`active`:t<r?`past`:``},e.count))})]})})}var Yd=[{label:`Inhale`,secs:4},{label:`Hold`,secs:4},{label:`Exhale`,secs:4},{label:`Hold`,secs:4}];function Xd({id:e,active:t,muted:n,hapticsEnabled:r,onInteract:i}){let[a,o]=(0,b.useState)(0);(0,b.useEffect)(()=>{if(!t)return;let{label:i,secs:s}=Yd[a];X(r,i===`Inhale`||i===`Exhale`?[18,50,18]:[12]),!n&&(i===`Inhale`||i===`Exhale`)&&(Y.resume(),Y.tone(e,i===`Inhale`?330:247,.6,.045));let c=window.setTimeout(()=>o(e=>(e+1)%Yd.length),s*1e3);return()=>window.clearTimeout(c)},[t,a,r,e,n]);let{label:s,secs:c}=Yd[a],l=[{left:`0%`,top:`0%`},{left:`100%`,top:`0%`},{left:`100%`,top:`100%`},{left:`0%`,top:`100%`}][(a+1)%4];return(0,H.jsxs)(`div`,{className:`box-breath-card`,onPointerDown:()=>i?.(`tap`),children:[(0,H.jsxs)(`div`,{className:`box-breath-frame`,children:[(0,H.jsx)(`span`,{className:`box-breath-dot`,style:{left:l.left,top:l.top,transitionDuration:`${c}s`}}),(0,H.jsx)(`span`,{className:`box-breath-label`,children:s})]}),(0,H.jsx)(`p`,{children:`Trace the square — in, hold, out, hold.`})]})}var Zd=[{bx:-.3,speed:.16,phase:0,r:.3},{bx:.26,speed:.12,phase:2.1,r:.34},{bx:.02,speed:.2,phase:4.2,r:.22},{bx:-.18,speed:.14,phase:1.3,r:.26},{bx:.34,speed:.18,phase:5.1,r:.2},{bx:-.36,speed:.11,phase:3.4,r:.24}],Qd=`
 attribute vec2 aPos;
 void main() {
   gl_Position = vec4(aPos, 0.0, 1.0);
@@ -1116,50 +1153,117 @@ vec3 normalAt(vec3 p) {
     map(p + e.yyx) - map(p - e.yyx)));
 }
 
+// Ambient occlusion: what puts weight into the crease where the stone meets
+// the surface, and depth into the thumb dimple.
+float ambientOcclusion(vec3 p, vec3 n) {
+  float occ = 0.0;
+  float scale = 1.0;
+  for (int i = 0; i < 5; i++) {
+    float h = 0.012 + 0.10 * float(i) / 4.0;
+    occ += (h - map(p + n * h)) * scale;
+    scale *= 0.82;
+  }
+  return clamp(1.0 - 1.7 * occ, 0.0, 1.0);
+}
+
+float softShadow(vec3 ro, vec3 rd) {
+  float res = 1.0;
+  float t = 0.03;
+  for (int i = 0; i < 16; i++) {
+    float h = map(ro + rd * t);
+    res = min(res, 9.0 * h / t);
+    t += clamp(h, 0.02, 0.16);
+    if (res < 0.004 || t > 2.2) break;
+  }
+  return clamp(res, 0.0, 1.0);
+}
+
 void main() {
   vec2 uv = (gl_FragCoord.xy * 2.0 - uRes) / uRes.y;
-  vec3 ro = vec3(0.0, 0.0, 1.9);
-  vec3 rd = normalize(vec3(uv * 0.6, -1.0));
+  vec3 ro = vec3(0.0, 0.30, 1.95);
+  vec3 rd = normalize(vec3(uv * 0.6, -1.0) + vec3(0.0, -0.10, 0.0));
+
+  vec3 lightDir = normalize(vec3(-0.35, 0.70, 0.58));
+
+  // Hemispheric ambient — a stone lit by one lamp in a void looks like clip art.
+  vec3 sky = mix(vec3(0.60, 0.68, 0.80), vec3(0.15, 0.20, 0.29), uDark);
+  vec3 bounce = mix(vec3(0.44, 0.40, 0.35), vec3(0.10, 0.09, 0.11), uDark);
+  const float GROUND = -0.52;
 
   float t = 0.0;
   bool hit = false;
+  bool onGround = false;
   vec3 p = ro;
-  for (int i = 0; i < 44; i++) {
+  for (int i = 0; i < 52; i++) {
     p = ro + rd * t;
-    float d = map(p);
-    if (d < 0.004) { hit = true; break; }
-    t += d;
-    if (t > 3.5) break;
+    float ds = map(p);
+    float dg = p.y - GROUND;
+    float d = min(ds, dg);
+    if (d < 0.0022) { hit = true; onGround = dg < ds; break; }
+    t += d * 0.92;
+    if (t > 5.0) break;
   }
+
+  vec3 col;
+  float v = uv.y * 0.5 + 0.5;
+  vec3 backdrop = mix(bounce * 0.5, sky * 0.40, v);
 
   if (!hit) {
-    gl_FragColor = vec4(0.0);
-    return;
+    col = backdrop * (1.0 - 0.22 * length(uv) * 0.5);
+  } else if (onGround) {
+    vec3 n = vec3(0.0, 1.0, 0.0);
+    float sh = softShadow(p + n * 0.02, lightDir);
+    float ao = ambientOcclusion(p, n);
+    vec3 base = mix(vec3(0.54, 0.56, 0.61), vec3(0.08, 0.095, 0.125), uDark);
+    col = base * (0.30 + 0.70 * clamp(dot(n, lightDir), 0.0, 1.0) * sh) * ao;
+    col = mix(col, backdrop, smoothstep(1.3, 3.6, t));
+  } else {
+    vec3 n = normalAt(p);
+    float ao = ambientOcclusion(p, n);
+    float sh = softShadow(p + n * 0.02, lightDir);
+
+    // Rough stone keeps a fine grain; polishing wears it away.
+    vec3 gp = p * 210.0;
+    vec3 jitter = vec3(hash3(floor(gp)), hash3(floor(gp) + 19.3), hash3(floor(gp) + 47.1)) - 0.5;
+    n = normalize(n + jitter * 0.05 * (1.0 - uPolish * 0.8));
+
+    float diff = clamp(dot(n, lightDir), 0.0, 1.0);
+    float rim = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 2.6);
+
+    // Specular tightens as it polishes — the payoff of rubbing.
+    vec3 hv = normalize(lightDir - rd);
+    float specPow = mix(8.0, 110.0, uPolish);
+    float spec = pow(clamp(dot(n, hv), 0.0, 1.0), specPow) * mix(0.10, 0.62, uPolish) * sh;
+
+    // Mineral banding, with a HUE shift between bands rather than only value —
+    // that is what stops a single-tint object looking like plastic.
+    float band = noise3(p * vec3(3.0, 6.5, 3.0));
+    float vein = smoothstep(0.42, 0.62, noise3(p * vec3(7.0, 2.5, 7.0) + 4.1));
+    vec3 warmStone = mix(uTint, vec3(0.62, 0.55, 0.48), 0.45);
+    vec3 coolStone = mix(uTint * 0.6, vec3(0.24, 0.34, 0.44), 0.5);
+    vec3 body = mix(coolStone, warmStone, band);
+    body = mix(body, body * 1.18 + vec3(0.05, 0.045, 0.04), vein * 0.55);
+
+    // Shadowed side goes cooler, not merely darker.
+    vec3 shade = mix(body * 0.28, vec3(0.14, 0.20, 0.31), 0.42);
+    col = mix(shade, body, diff * mix(0.5, 1.0, sh));
+    col += (sky * 0.30 + bounce * 0.16) * ao;
+    col += rim * mix(uTint, sky, 0.5) * 0.14;
+    col += vec3(1.0, 0.97, 0.92) * spec;
+
+    // Mica: sparse bright flecks that catch the light and drift very slowly, so
+    // the stone glints as if you were turning it. This is most of the "life".
+    float mica = hash3(floor(p * 90.0 + vec3(uTime * 0.05)));
+    float glint = smoothstep(0.985, 1.0, mica) * (0.35 + 0.65 * uPolish);
+    col += vec3(1.0, 0.98, 0.94) * glint * diff * 0.9;
+
+    // Friction warmth under the thumb.
+    float d = length(p.xy - uThumb);
+    col += vec3(0.12, 0.06, 0.03) * exp(-d * d * 16.0) * uPress;
+
+    col *= ao;
   }
 
-  vec3 n = normalAt(p);
-  vec3 lightDir = normalize(vec3(-0.35, 0.65, 0.6));
-  float diff = clamp(dot(n, lightDir), 0.0, 1.0);
-  float rim = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 2.4);
-
-  // Specular is the polish read: wide and dull when rough, tight and bright
-  // when worn smooth. This is the payoff of rubbing.
-  vec3 hv = normalize(lightDir - rd);
-  float specPow = mix(6.0, 90.0, uPolish);
-  float spec = pow(clamp(dot(n, hv), 0.0, 1.0), specPow) * mix(0.08, 0.55, uPolish);
-
-  // Mineral banding so the stone reads as rock, not rubber.
-  float band = noise3(p * vec3(3.0, 6.5, 3.0)) * 0.5;
-  vec3 base = mix(uTint * 0.55, uTint, band);
-  vec3 col = base * (0.30 + 0.70 * diff);
-  col += rim * mix(uTint, vec3(1.0), 0.5) * 0.16;
-  col += vec3(1.0, 0.98, 0.92) * spec;
-
-  // Warmth blooms under the thumb while pressing — friction heat, gently.
-  float d = length(p.xy - uThumb);
-  col += vec3(0.10, 0.05, 0.02) * exp(-d * d * 16.0) * uPress;
-
-  col = mix(col, col * 0.86, uDark * 0.4);
   col = mix(col, vec3(dot(col, vec3(0.299, 0.587, 0.114))), uSoft * 0.45);
   col = clamp(col, 0.0, 1.0);
   gl_FragColor = vec4(col, 1.0);
@@ -1429,98 +1533,197 @@ void main() {
 `;function Hf(e){let{id:t,active:n,muted:r,reduceMotion:i,reduceBrightness:a,hapticsEnabled:o,onInteract:s}=e,c=(0,b.useRef)(null),[l,u]=(0,b.useState)(!0),d=(0,b.useRef)(0),f=(0,b.useRef)(!1),p=(0,b.useRef)(0),m=(0,b.useRef)(99),h=(0,b.useRef)({x:0,y:0}),g=i||!l;if((0,b.useEffect)(()=>{let e=c.current;if(!e||!n||g)return;let t=Sd(e,Vf);if(!t){u(!1);return}return t.start((e,n)=>{let{gl:r,u:i}=t,{width:o,height:s}=t.size();p.current*=.36**e,m.current+=e,r.uniform2f(i(`uRes`),o,s),r.uniform1f(i(`uEnergy`),p.current),r.uniform1f(i(`uAge`),m.current),r.uniform2f(i(`uRub`),h.current.x,h.current.y),r.uniform1f(i(`uTime`),n),r.uniform3f(i(`uTint`),.82,.62,.34),r.uniform1f(i(`uSoft`),+!!a),r.uniform1f(i(`uDark`),+!!Z()),r.clearColor(0,0,0,0),r.clear(r.COLOR_BUFFER_BIT)}),()=>t.dispose()},[n,a,g]),g)return(0,H.jsx)(Rf,{...e});let _=e=>{if(!n)return;let i=Date.now();i-d.current<90||(d.current=i,s?.(`tap`),X(o,[10,30,12]),p.current=Math.min(1,p.current+(e>.06?.9:.3)),e>.06&&(m.current=0),r||(Y.resume(),zf.forEach((n,r)=>{Y.tone(t,Bf*n,3.6-r*.7,e*(r===0?1:.3/r))})))},v=e=>{let t=e.currentTarget.getBoundingClientRect();return{x:Q((e.clientX-t.left)/t.width*2-1,-1,1)*(t.width/t.height),y:Q(1-(e.clientY-t.top)/t.height*2,-1,1)*1.25}};return(0,H.jsxs)(`div`,{className:`canvas-card singing-bowl3d-card`,children:[(0,H.jsx)(`canvas`,{ref:c,className:`stim3d-canvas`,"aria-label":`Strike or rub the singing bowl`,onPointerDown:e=>{f.current=!0,e.currentTarget.setPointerCapture(e.pointerId),h.current=v(e),_(.09)},onPointerMove:e=>{f.current&&(h.current=v(e),Math.abs(e.movementX)+Math.abs(e.movementY)>6&&_(.04))},onPointerUp:()=>{f.current=!1,h.current={x:0,y:0}},onPointerCancel:()=>{f.current=!1,h.current={x:0,y:0}}}),(0,H.jsx)(`p`,{children:r?`Turn sound on, then strike the bowl.`:`Strike it, or rub the rim to keep it singing.`})]})}function Uf(e,t,n){return Math.min(n,Math.max(t,e))}function Wf({active:e,hapticsEnabled:t,reduceMotion:n,onInteract:r}){let[i,a]=(0,b.useState)({x:0,y:0}),[o,s]=(0,b.useState)(0),[c,l]=(0,b.useState)(!1),u=(0,b.useRef)(!1),d=(0,b.useRef)(0),f=(0,b.useRef)(null),p=e=>{let n=e.currentTarget.getBoundingClientRect(),r=n.left+n.width/2,i=n.top+n.height/2,o=Uf((e.clientX-r)/(n.width/2),-1,1),c=Uf((e.clientY-i)/(n.height/2),-1,1),l=Uf(Math.hypot(o,c),0,1);a({x:o,y:c}),s(Uf(.3+l*.7,0,1));let u=Date.now(),p=f.current,m=p?Math.hypot(e.clientX-p.x,e.clientY-p.y):0;u-d.current>90&&m>4&&(d.current=u,X(t,6)),f.current={x:e.clientX,y:e.clientY}},m=n=>{e&&(u.current=!0,l(!0),n.currentTarget.setPointerCapture(n.pointerId),r?.(`tap`),X(t,[10,26,14]),f.current={x:n.clientX,y:n.clientY},p(n))},h=()=>{u.current&&(u.current=!1,l(!1),a({x:0,y:0}),s(0),f.current=null)};return(0,H.jsxs)(`div`,{className:`squish-card`,"data-pressing":c,"data-reduce-motion":n,style:{"--sq-x":i.x.toFixed(3),"--sq-y":i.y.toFixed(3),"--sq":o.toFixed(3)},onPointerDown:m,onPointerMove:t=>{!e||!u.current||p(t)},onPointerUp:h,onPointerCancel:h,role:`application`,"aria-label":`Press and knead a soft stress blob`,children:[(0,H.jsx)(`div`,{className:`squish-stage`,children:(0,H.jsxs)(`div`,{className:`squish-blob`,children:[(0,H.jsx)(`span`,{className:`squish-shine`}),(0,H.jsx)(`span`,{className:`squish-shine squish-shine-2`})]})}),(0,H.jsx)(`p`,{children:c?`Knead it…`:`Press and knead. Let it spring back.`})]})}var Gf=`
 precision highp float;
 uniform vec2 uRes;
-uniform vec2 uPress;    // contact point in blob space
-uniform float uSquish;  // 0 = relaxed, 1 = fully compressed
-uniform float uDimple;  // depth of the finger dent
-uniform float uWobble;  // decaying jiggle after release
+uniform vec2 uPress;     // contact point in blob space
+uniform float uSquish;   // 0 = relaxed, 1 = fully compressed
+uniform float uDimple;   // depth of the finger dent
+uniform float uWobble;   // decaying jiggle after release
+uniform float uBreath;   // idle breathing, 0..1
 uniform float uTime;
 uniform vec3 uTint;
 uniform float uSoft;
 uniform float uDark;
+
+const float GROUND = -0.86;
+
+float hash(vec3 p) {
+  return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
 
 float smax(float a, float b, float k) {
   float h = clamp(0.5 - 0.5 * (a - b) / k, 0.0, 1.0);
   return mix(a, b, h) + k * h * (1.0 - h);
 }
 
-float map(vec3 p) {
-  // Squash vertically, bulge horizontally — volume roughly conserved, which is
-  // what makes it read as soft matter instead of a shrinking ball.
-  float squash = 1.0 + uSquish * 0.85;
-  float bulge = 1.0 - uSquish * 0.3;
+// The blob alone. Kept separate so shadow rays can skip the ground.
+float blobDist(vec3 p) {
+  // Squash along the press axis; widen to compensate so volume is roughly
+  // conserved. A ball that only shrinks reads as deflating, not compressing.
+  float squash = 1.0 + uSquish * 0.85 + uBreath * 0.012;
+  float widen = 1.0 / sqrt(squash);
+
   vec3 q = p;
 
-  // Jiggle: a slow wobble along two axes that decays after release.
+  // Jiggle after release, on two axes at slightly different rates so it never
+  // looks like a single clean oscillation.
   q.x += sin(p.y * 3.0 + uTime * 7.0) * 0.045 * uWobble;
   q.y += sin(p.x * 3.4 + uTime * 6.2) * 0.04 * uWobble;
 
   q.y *= squash;
-  q.xz *= bulge;
-  float blob = length(q) - 0.72;
+  q.xz *= widen;
+
+  float r = 0.70;
+  float d = length(q) - r;
+
+  // Rest on the ground rather than intersecting it: flatten the underside.
+  d = smax(d, GROUND + 0.015 - p.y, 0.16);
 
   // The dent: subtract a sphere at the contact point so the surface actually
-  // gives way under the finger rather than just scaling.
+  // gives way under the finger.
   vec3 dent = vec3(uPress, 0.62);
   float dimple = length(p - dent) - (0.34 + uDimple * 0.2);
-  blob = smax(blob, -dimple + uDimple * 0.34, 0.22);
+  d = smax(d, -dimple + uDimple * 0.34, 0.22);
 
-  return blob;
+  return d;
+}
+
+// Scene: x = distance, y = material (0 blob, 1 ground).
+vec2 map(vec3 p) {
+  float b = blobDist(p);
+  float g = p.y - GROUND;
+  return b < g ? vec2(b, 0.0) : vec2(g, 1.0);
 }
 
 vec3 normalAt(vec3 p) {
-  vec2 e = vec2(0.004, 0.0);
+  vec2 e = vec2(0.0035, 0.0);
   return normalize(vec3(
-    map(p + e.xyy) - map(p - e.xyy),
-    map(p + e.yxy) - map(p - e.yxy),
-    map(p + e.yyx) - map(p - e.yyx)));
+    map(p + e.xyy).x - map(p - e.xyy).x,
+    map(p + e.yxy).x - map(p - e.yxy).x,
+    map(p + e.yyx).x - map(p - e.yyx).x));
+}
+
+// Ambient occlusion: march a short way along the normal and see how much
+// geometry crowds it. This is what darkens the crease under the blob and the
+// inside of the dent — the single biggest cue that it has volume.
+float ambientOcclusion(vec3 p, vec3 n) {
+  float occ = 0.0;
+  float scale = 1.0;
+  for (int i = 0; i < 5; i++) {
+    float h = 0.012 + 0.11 * float(i) / 4.0;
+    occ += (h - map(p + n * h).x) * scale;
+    scale *= 0.82;
+  }
+  return clamp(1.0 - 1.6 * occ, 0.0, 1.0);
+}
+
+// Penumbra widens with distance, so the contact point is sharp and the far
+// edge of the shadow is soft — the thing that makes a shadow read as real.
+float softShadow(vec3 ro, vec3 rd) {
+  float res = 1.0;
+  float t = 0.03;
+  for (int i = 0; i < 18; i++) {
+    float h = blobDist(ro + rd * t);
+    res = min(res, 9.0 * h / t);
+    t += clamp(h, 0.02, 0.18);
+    if (res < 0.004 || t > 2.4) break;
+  }
+  return clamp(res, 0.0, 1.0);
 }
 
 void main() {
   vec2 uv = (gl_FragCoord.xy * 2.0 - uRes) / uRes.y;
-  vec3 ro = vec3(0.0, 0.0, 2.2);
+
+  // Camera slightly above, looking down a touch — you are looking AT something
+  // on a surface rather than straight at a floating shape.
+  vec3 ro = vec3(0.0, 0.35, 2.25);
   vec3 rd = normalize(vec3(uv * 0.62, -1.0));
+  rd = normalize(rd + vec3(0.0, -0.12, 0.0));
+
+  vec3 lightDir = normalize(vec3(-0.42, 0.72, 0.55));
+
+  // Hemispheric ambient: cool from above, warmer bounce from below. A single
+  // directional light with no ambient is always the flat-looking mistake.
+  vec3 sky = mix(vec3(0.62, 0.70, 0.80), vec3(0.16, 0.21, 0.30), uDark);
+  vec3 bounce = mix(vec3(0.42, 0.38, 0.34), vec3(0.10, 0.09, 0.10), uDark);
 
   float t = 0.0;
-  bool hit = false;
+  float mat = -1.0;
   vec3 p = ro;
-  for (int i = 0; i < 46; i++) {
+  for (int i = 0; i < 56; i++) {
     p = ro + rd * t;
-    float d = map(p);
-    if (d < 0.005) { hit = true; break; }
-    t += d * 0.9;
-    if (t > 4.0) break;
+    vec2 h = map(p);
+    if (h.x < 0.0022) { mat = h.y; break; }
+    t += h.x * 0.92;
+    if (t > 6.0) break;
   }
 
-  if (!hit) {
-    gl_FragColor = vec4(0.0);
-    return;
+  vec3 col;
+
+  if (mat < 0.0) {
+    // Background: a soft vertical wash so the blob sits in a space.
+    float v = uv.y * 0.5 + 0.5;
+    col = mix(bounce * 0.55, sky * 0.42, v);
+    col *= 1.0 - 0.25 * length(uv) * 0.5;
+  } else {
+    vec3 n = normalAt(p);
+    float ao = ambientOcclusion(p, n);
+    float sh = softShadow(p + n * 0.02, lightDir);
+
+    if (mat > 0.5) {
+      // ---- ground ----
+      float diff = clamp(dot(n, lightDir), 0.0, 1.0);
+      vec3 base = mix(vec3(0.55, 0.57, 0.62), vec3(0.085, 0.10, 0.13), uDark);
+      col = base * (0.30 + 0.70 * diff * sh) * ao;
+      // Fade the floor out so it never reads as a hard stage edge.
+      col = mix(col, mix(bounce * 0.55, sky * 0.42, 0.5), smoothstep(1.6, 4.2, t));
+    } else {
+      // ---- silicone body ----
+
+      // Fine matte grain, applied to the NORMAL rather than the SDF: real
+      // rubber is never a perfect mathematical surface, and perturbing the
+      // distance field would cost a full extra march.
+      vec3 gp = p * 190.0;
+      vec3 jitter = vec3(hash(floor(gp)), hash(floor(gp) + 31.7), hash(floor(gp) + 71.3)) - 0.5;
+      n = normalize(n + jitter * 0.035);
+
+      // Wrap diffuse: light bleeds past the terminator, which is what makes
+      // soft translucent things look soft rather than plastic.
+      float wrap = 0.55;
+      float diff = clamp((dot(n, lightDir) + wrap) / (1.0 + wrap), 0.0, 1.0);
+
+      // Subsurface: light entering the back and scattering through. Thin parts
+      // (edges, the stretched rim of a squash) glow more.
+      float thickness = clamp(blobDist(p - lightDir * 0.25) * -3.2, 0.0, 1.0);
+      float back = pow(clamp(dot(-n, lightDir) * 0.5 + 0.5, 0.0, 1.0), 2.6);
+      vec3 sssTint = mix(uTint, vec3(1.0, 0.72, 0.62), 0.35); // warmer through flesh
+      vec3 sss = sssTint * back * (0.25 + 0.75 * thickness) * 0.55;
+
+      // Shadowed side shifts COOLER and is not merely darker — a shadow that is
+      // just a dimmer copy of the lit colour is the classic flat-render tell.
+      vec3 lit = uTint;
+      vec3 shade = mix(uTint * 0.30, vec3(0.16, 0.22, 0.34), 0.45);
+
+      col = mix(shade, lit, diff * mix(0.55, 1.0, sh));
+      col += sss * ao;
+      col += (sky * 0.30 + bounce * 0.18) * ao;   // hemispheric ambient
+
+      // Matte fresnel: a soft edge sheen tinted toward the sky, never white,
+      // and a low exponent so it stays velvety instead of glassy.
+      float fres = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 3.2);
+      col += sky * fres * 0.16;
+
+      // Pressure blanching: silicone goes pale where it is compressed.
+      float contact = 1.0 - smoothstep(0.0, 0.48, length(p.xy - uPress));
+      col = mix(col, col * 1.14 + uTint * 0.10, contact * uDimple * 0.85);
+
+      col *= ao;
+    }
   }
-
-  vec3 n = normalAt(p);
-  vec3 lightDir = normalize(vec3(0.4, 0.8, 0.6));
-  float diff = clamp(dot(n, lightDir), 0.0, 1.0);
-  float rim = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 2.6);
-
-  // Subsurface cheat: light bleeding through thin edges is what makes silicone
-  // and putty read as soft. Matte house style, so no hard specular.
-  float sss = pow(clamp(dot(-n, lightDir) * 0.5 + 0.5, 0.0, 1.0), 2.0);
-
-  vec3 base = uTint;
-  vec3 deep = uTint * 0.42;
-  vec3 col = mix(deep, base, 0.35 + 0.65 * diff);
-  col += uTint * sss * 0.28;
-  col += rim * mix(uTint, vec3(1.0), 0.4) * 0.22;
-
-  // Pressure blush: the contact area warms slightly as it compresses.
-  float contact = 1.0 - smoothstep(0.0, 0.5, length(p.xy - uPress));
-  col = mix(col, col * 1.16 + uTint * 0.1, contact * uDimple * 0.8);
 
   col = mix(col, vec3(dot(col, vec3(0.299, 0.587, 0.114))), uSoft * 0.4);
-  col *= mix(1.06, 1.0, uDark);
   col = clamp(col, 0.0, 1.0);
   gl_FragColor = vec4(col, 1.0);
 }
-`;function Kf(e){let{active:t,reduceMotion:n,reduceBrightness:r,hapticsEnabled:i,onInteract:a}=e,o=(0,b.useRef)(null),[s,c]=(0,b.useState)(!0),[l,u]=(0,b.useState)(!1),d=(0,b.useRef)(!1),f=(0,b.useRef)({x:0,y:0}),p=(0,b.useRef)(0),m=(0,b.useRef)(null),h=n||!s;if((0,b.useEffect)(()=>{let e=o.current;if(!e||!t||h)return;let n=Sd(e,Gf);if(!n){c(!1);return}let i=0,a=0,s=0,l=0,u=0;return n.start((e,t)=>{let{gl:o,u:c}=n,{width:p,height:m}=n.size(),h=d.current,g=Math.hypot(f.current.x,f.current.y),_=h?Q(.28+g*.5,0,.85):0,v=+!!h,y=i,b=h?9:3.4;i+=(_-i)*Math.min(1,e*b),a+=(v-a)*Math.min(1,e*(h?12:5));let x=y-i;!h&&x>.002&&(s=Math.min(1,s+x*3.2)),s*=.14**e,l+=(f.current.x-l)*Math.min(1,e*14),u+=(f.current.y-u)*Math.min(1,e*14),o.uniform2f(c(`uRes`),p,m),o.uniform2f(c(`uPress`),l,u),o.uniform1f(c(`uSquish`),i),o.uniform1f(c(`uDimple`),a),o.uniform1f(c(`uWobble`),s),o.uniform1f(c(`uTime`),t),o.uniform3f(c(`uTint`),.36,.82,.76),o.uniform1f(c(`uSoft`),+!!r),o.uniform1f(c(`uDark`),+!!Z()),o.clearColor(0,0,0,0),o.clear(o.COLOR_BUFFER_BIT)}),()=>n.dispose()},[t,r,h]),h)return(0,H.jsx)(Wf,{...e});let g=e=>{let t=e.currentTarget.getBoundingClientRect();f.current.x=Q((e.clientX-t.left)/t.width*2-1,-1,1)*.6,f.current.y=Q(1-(e.clientY-t.top)/t.height*2,-1,1)*.6;let n=Date.now(),r=m.current,a=r?Math.hypot(e.clientX-r.x,e.clientY-r.y):0;n-p.current>90&&a>4&&(p.current=n,X(i,6)),m.current={x:e.clientX,y:e.clientY}},_=()=>{d.current&&(d.current=!1,u(!1),m.current=null)};return(0,H.jsxs)(`div`,{className:`squish-card squish3d-card`,role:`application`,"aria-label":`Press and knead a soft stress blob`,children:[(0,H.jsx)(`div`,{className:`squish3d-stage`,onPointerDown:e=>{t&&(d.current=!0,u(!0),e.currentTarget.setPointerCapture(e.pointerId),a?.(`tap`),X(i,[10,26,14]),m.current={x:e.clientX,y:e.clientY},g(e))},onPointerMove:e=>{!t||!d.current||g(e)},onPointerUp:_,onPointerCancel:_,children:(0,H.jsx)(`canvas`,{ref:o,className:`stim3d-canvas`,"aria-hidden":`true`})}),(0,H.jsx)(`p`,{children:l?`Knead it…`:`Press and knead. Let it spring back.`})]})}function qf({id:e,active:t,muted:n,hapticsEnabled:r,onInteract:i}){let[a,o]=(0,b.useState)(80),[s,c]=(0,b.useState)(!1),[l,u]=(0,b.useState)(0),[d,f]=(0,b.useState)(0),[p,m]=(0,b.useState)(0),h=(0,b.useRef)(0),g=(0,b.useRef)(6e4/80);return(0,b.useEffect)(()=>{g.current=6e4/a},[a]),(0,b.useEffect)(()=>{if(!t||!s)return;let i=window.setInterval(()=>{u(e=>e+1),h.current=Date.now(),X(r,[12,30,12]),n||(Y.resume(),Y.tone(e,220,.14,.05))},g.current);return()=>window.clearInterval(i)},[t,s,a,r,e,n]),(0,H.jsxs)(`div`,{className:`tap-along-card`,children:[(0,H.jsxs)(`button`,{type:`button`,className:`tap-along-pad`,"data-beat":l%2,"data-tap":p,style:{"--bpm":a},"aria-label":`Tap along with the beat`,onPointerDown:()=>{if(t&&(i?.(`tap`),m(e=>e+1),X(r,8),n||(Y.resume(),Y.impact(e,`tick`)),s)){let e=Date.now()-h.current;Math.min(e,Math.max(0,g.current-e))<130&&f(e=>e+1)}},children:[(0,H.jsx)(`span`,{className:`tap-along-ring`,"data-running":s},`b${l}`),(0,H.jsx)(`span`,{className:`tap-along-core`},`t${p}`),(0,H.jsx)(`span`,{className:`tap-along-text`,children:s?`Tap with it`:`Tap to start a beat`})]}),(0,H.jsxs)(`div`,{className:`tap-along-controls`,children:[(0,H.jsx)(`button`,{type:`button`,className:`tap-along-toggle`,onClick:()=>{i?.(`tap`),c(e=>!e),u(0),f(0)},children:s?`Stop`:`Start`}),(0,H.jsxs)(`label`,{className:`tap-along-tempo`,children:[(0,H.jsxs)(`span`,{children:[a,` bpm`]}),(0,H.jsx)(`input`,{type:`range`,min:50,max:120,value:a,"aria-label":`Tempo in beats per minute`,onChange:e=>{i?.(`tap`),o(Number(e.currentTarget.value))}})]})]}),(0,H.jsx)(`p`,{children:d>0?`In sync ×${d}`:`Find the pulse and tap with it.`})]})}var Jf=[196,220,247,294,330,392,440,494,587,659,784,880,988,1175,1319,1568];function Yf({id:e,active:t,muted:n,onInteract:r,hapticsEnabled:i}){let a=a=>{t&&(r?.(`tap`),X(i,10),n||(Y.resume(),Y.tone(e,a,.48,.08)))};return(0,H.jsx)(`div`,{className:`tone-matrix`,"aria-label":`Tone matrix`,children:Jf.map((e,t)=>(0,H.jsx)(`button`,{type:`button`,"aria-label":`Playable tone ${t+1}`,onClick:()=>a(e)},e))})}function Xf({active:e,onInteract:t,reduceMotion:n,reduceBrightness:r}){let i=(0,b.useRef)(null),a=(0,b.useRef)({x:0,y:0}),o=(0,b.useRef)({x:0,y:0}),s=(0,b.useRef)([]),c=(0,b.useRef)(!1);(0,b.useEffect)(()=>{let t=i.current;if(!t||!e)return;let l=t.getContext(`2d`);if(!l)return;let u=0,d=1,f=()=>{let e=t.getBoundingClientRect();d=n?1:Math.min(window.devicePixelRatio||1,1.4),t.width=Math.max(1,Math.floor(e.width*d)),t.height=Math.max(1,Math.floor(e.height*d)),l.setTransform(d,0,0,d,0,0),c.current||=(a.current={x:e.width/2,y:e.height/2},o.current={x:e.width/2,y:e.height/2},!0)},p=n?.5:.14,m=()=>{if(!document.hidden){let e=t.clientWidth,i=t.clientHeight,c=a.current;o.current.x+=(c.x-o.current.x)*p,o.current.y+=(c.y-o.current.y)*p,s.current.push({x:o.current.x,y:o.current.y}),s.current.length>(n?10:30)&&s.current.shift(),l.fillStyle=document.documentElement.dataset.theme===`dark`?`#11151e`:r?`#eef1f3`:`#f3f6f8`,l.fillRect(0,0,e,i);let u=s.current;for(let e=0;e<u.length;e+=1){let t=e/u.length,n=168+82*t;l.beginPath(),l.fillStyle=`hsla(${n}, ${r?50:85}%, ${r?68:56}%, ${t*.6})`,l.arc(u[e].x,u[e].y,2+t*12,0,Math.PI*2),l.fill()}l.beginPath();let d=l.createRadialGradient(o.current.x,o.current.y,0,o.current.x,o.current.y,18);d.addColorStop(0,`hsla(168, 75%, 62%, 0.95)`),d.addColorStop(1,`hsla(168, 75%, 62%, 0)`),l.fillStyle=d,l.arc(o.current.x,o.current.y,18,0,Math.PI*2),l.fill()}u=requestAnimationFrame(m)};return f(),m(),window.addEventListener(`resize`,f),()=>{cancelAnimationFrame(u),window.removeEventListener(`resize`,f)}},[e,n,r]);let l=e=>{let t=e.currentTarget.getBoundingClientRect();a.current={x:e.clientX-t.left,y:e.clientY-t.top}};return(0,H.jsxs)(`div`,{className:`canvas-card trail-follow-card`,children:[(0,H.jsx)(`canvas`,{ref:i,"aria-label":`A glowing orb follows your finger. Lead it around.`,onPointerDown:n=>{e&&(t?.(`tap`),l(n),n.currentTarget.setPointerCapture(n.pointerId))},onPointerMove:t=>{e&&(t.buttons||t.pressure>0)&&l(t)}}),(0,H.jsx)(`p`,{children:`Lead the light around.`})]})}var Zf=24,Qf=`
+`;function Kf(e){let{active:t,reduceMotion:n,reduceBrightness:r,hapticsEnabled:i,onInteract:a}=e,o=(0,b.useRef)(null),[s,c]=(0,b.useState)(!0),[l,u]=(0,b.useState)(!1),d=(0,b.useRef)(!1),f=(0,b.useRef)({x:0,y:0}),p=(0,b.useRef)(0),m=(0,b.useRef)(null),h=n||!s;if((0,b.useEffect)(()=>{let e=o.current;if(!e||!t||h)return;let n=Sd(e,Gf);if(!n){c(!1);return}let i=0,a=0,s=0,l=0,u=0;return n.start((e,t)=>{let{gl:o,u:c}=n,{width:p,height:m}=n.size(),h=d.current,g=Math.hypot(f.current.x,f.current.y),_=h?Q(.28+g*.5,0,.85):0,v=i;i+=(_-i)*Math.min(1,e*(h?9:3.4)),a+=(+!!h-a)*Math.min(1,e*(h?12:5));let y=v-i;!h&&y>.002&&(s=Math.min(1,s+y*3.2)),s*=.14**e,l+=(f.current.x-l)*Math.min(1,e*14),u+=(f.current.y-u)*Math.min(1,e*14);let b=(1-a)*(.5+.5*Math.sin(t*.9));o.uniform2f(c(`uRes`),p,m),o.uniform2f(c(`uPress`),l,u),o.uniform1f(c(`uSquish`),i),o.uniform1f(c(`uDimple`),a),o.uniform1f(c(`uWobble`),s),o.uniform1f(c(`uBreath`),b),o.uniform1f(c(`uTime`),t),o.uniform3f(c(`uTint`),.36,.82,.76),o.uniform1f(c(`uSoft`),+!!r),o.uniform1f(c(`uDark`),+!!Z()),o.clearColor(0,0,0,0),o.clear(o.COLOR_BUFFER_BIT)}),()=>n.dispose()},[t,r,h]),h)return(0,H.jsx)(Wf,{...e});let g=e=>{let t=e.currentTarget.getBoundingClientRect();f.current.x=Q((e.clientX-t.left)/t.width*2-1,-1,1)*.6,f.current.y=Q(1-(e.clientY-t.top)/t.height*2,-1,1)*.6;let n=Date.now(),r=m.current,a=r?Math.hypot(e.clientX-r.x,e.clientY-r.y):0;n-p.current>90&&a>4&&(p.current=n,X(i,6)),m.current={x:e.clientX,y:e.clientY}},_=()=>{d.current&&(d.current=!1,u(!1),m.current=null,X(i,14))};return(0,H.jsxs)(`div`,{className:`squish-card squish3d-card`,role:`application`,"aria-label":`Press and knead a soft stress blob`,children:[(0,H.jsx)(`div`,{className:`squish3d-stage`,onPointerDown:e=>{t&&(d.current=!0,u(!0),e.currentTarget.setPointerCapture(e.pointerId),a?.(`tap`),X(i,[10,26,14]),m.current={x:e.clientX,y:e.clientY},g(e))},onPointerMove:e=>{!t||!d.current||g(e)},onPointerUp:_,onPointerCancel:_,children:(0,H.jsx)(`canvas`,{ref:o,className:`stim3d-canvas`,"aria-hidden":`true`})}),(0,H.jsx)(`p`,{children:l?`Knead it…`:`Press and knead. Let it spring back.`})]})}function qf({id:e,active:t,muted:n,hapticsEnabled:r,onInteract:i}){let[a,o]=(0,b.useState)(80),[s,c]=(0,b.useState)(!1),[l,u]=(0,b.useState)(0),[d,f]=(0,b.useState)(0),[p,m]=(0,b.useState)(0),h=(0,b.useRef)(0),g=(0,b.useRef)(6e4/80);return(0,b.useEffect)(()=>{g.current=6e4/a},[a]),(0,b.useEffect)(()=>{if(!t||!s)return;let i=window.setInterval(()=>{u(e=>e+1),h.current=Date.now(),X(r,[12,30,12]),n||(Y.resume(),Y.tone(e,220,.14,.05))},g.current);return()=>window.clearInterval(i)},[t,s,a,r,e,n]),(0,H.jsxs)(`div`,{className:`tap-along-card`,children:[(0,H.jsxs)(`button`,{type:`button`,className:`tap-along-pad`,"data-beat":l%2,"data-tap":p,style:{"--bpm":a},"aria-label":`Tap along with the beat`,onPointerDown:()=>{if(t&&(i?.(`tap`),m(e=>e+1),X(r,8),n||(Y.resume(),Y.impact(e,`tick`)),s)){let e=Date.now()-h.current;Math.min(e,Math.max(0,g.current-e))<130&&f(e=>e+1)}},children:[(0,H.jsx)(`span`,{className:`tap-along-ring`,"data-running":s},`b${l}`),(0,H.jsx)(`span`,{className:`tap-along-core`},`t${p}`),(0,H.jsx)(`span`,{className:`tap-along-text`,children:s?`Tap with it`:`Tap to start a beat`})]}),(0,H.jsxs)(`div`,{className:`tap-along-controls`,children:[(0,H.jsx)(`button`,{type:`button`,className:`tap-along-toggle`,onClick:()=>{i?.(`tap`),c(e=>!e),u(0),f(0)},children:s?`Stop`:`Start`}),(0,H.jsxs)(`label`,{className:`tap-along-tempo`,children:[(0,H.jsxs)(`span`,{children:[a,` bpm`]}),(0,H.jsx)(`input`,{type:`range`,min:50,max:120,value:a,"aria-label":`Tempo in beats per minute`,onChange:e=>{i?.(`tap`),o(Number(e.currentTarget.value))}})]})]}),(0,H.jsx)(`p`,{children:d>0?`In sync ×${d}`:`Find the pulse and tap with it.`})]})}var Jf=[196,220,247,294,330,392,440,494,587,659,784,880,988,1175,1319,1568];function Yf({id:e,active:t,muted:n,onInteract:r,hapticsEnabled:i}){let a=a=>{t&&(r?.(`tap`),X(i,10),n||(Y.resume(),Y.tone(e,a,.48,.08)))};return(0,H.jsx)(`div`,{className:`tone-matrix`,"aria-label":`Tone matrix`,children:Jf.map((e,t)=>(0,H.jsx)(`button`,{type:`button`,"aria-label":`Playable tone ${t+1}`,onClick:()=>a(e)},e))})}function Xf({active:e,onInteract:t,reduceMotion:n,reduceBrightness:r}){let i=(0,b.useRef)(null),a=(0,b.useRef)({x:0,y:0}),o=(0,b.useRef)({x:0,y:0}),s=(0,b.useRef)([]),c=(0,b.useRef)(!1);(0,b.useEffect)(()=>{let t=i.current;if(!t||!e)return;let l=t.getContext(`2d`);if(!l)return;let u=0,d=1,f=()=>{let e=t.getBoundingClientRect();d=n?1:Math.min(window.devicePixelRatio||1,1.4),t.width=Math.max(1,Math.floor(e.width*d)),t.height=Math.max(1,Math.floor(e.height*d)),l.setTransform(d,0,0,d,0,0),c.current||=(a.current={x:e.width/2,y:e.height/2},o.current={x:e.width/2,y:e.height/2},!0)},p=n?.5:.14,m=()=>{if(!document.hidden){let e=t.clientWidth,i=t.clientHeight,c=a.current;o.current.x+=(c.x-o.current.x)*p,o.current.y+=(c.y-o.current.y)*p,s.current.push({x:o.current.x,y:o.current.y}),s.current.length>(n?10:30)&&s.current.shift(),l.fillStyle=document.documentElement.dataset.theme===`dark`?`#11151e`:r?`#eef1f3`:`#f3f6f8`,l.fillRect(0,0,e,i);let u=s.current;for(let e=0;e<u.length;e+=1){let t=e/u.length,n=168+82*t;l.beginPath(),l.fillStyle=`hsla(${n}, ${r?50:85}%, ${r?68:56}%, ${t*.6})`,l.arc(u[e].x,u[e].y,2+t*12,0,Math.PI*2),l.fill()}l.beginPath();let d=l.createRadialGradient(o.current.x,o.current.y,0,o.current.x,o.current.y,18);d.addColorStop(0,`hsla(168, 75%, 62%, 0.95)`),d.addColorStop(1,`hsla(168, 75%, 62%, 0)`),l.fillStyle=d,l.arc(o.current.x,o.current.y,18,0,Math.PI*2),l.fill()}u=requestAnimationFrame(m)};return f(),m(),window.addEventListener(`resize`,f),()=>{cancelAnimationFrame(u),window.removeEventListener(`resize`,f)}},[e,n,r]);let l=e=>{let t=e.currentTarget.getBoundingClientRect();a.current={x:e.clientX-t.left,y:e.clientY-t.top}};return(0,H.jsxs)(`div`,{className:`canvas-card trail-follow-card`,children:[(0,H.jsx)(`canvas`,{ref:i,"aria-label":`A glowing orb follows your finger. Lead it around.`,onPointerDown:n=>{e&&(t?.(`tap`),l(n),n.currentTarget.setPointerCapture(n.pointerId))},onPointerMove:t=>{e&&(t.buttons||t.pressure>0)&&l(t)}}),(0,H.jsx)(`p`,{children:`Lead the light around.`})]})}var Zf=24,Qf=`
 precision highp float;
 uniform vec2 uRes;
 uniform vec2 uPt[${Zf}];   // trail, oldest → newest, aspect-corrected space
