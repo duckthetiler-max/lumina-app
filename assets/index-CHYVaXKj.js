@@ -1898,23 +1898,23 @@ precision highp float;
 uniform vec2 uRes;
 uniform vec2 uThumb;         // thumb in screen uv (y up)
 uniform float uPress;        // thumb contact 0..1
-uniform float uPolish;       // whole-stone polish 0..1 (slow, from rubbing distance)
+uniform float uPolish;       // whole-stone rub level 0..1 (slow, from distance)
 uniform float uTime;
 uniform float uSoft;
 uniform float uDark;
 uniform vec3 uRub[${gp}];  // (u, v, strength) recent rub spots, screen uv
 
 const vec3 LIGHT = normalize(vec3(-0.45, 0.80, 0.38));
-// Both windows sit in the hemisphere the TOP of the stone actually mirrors from
-// this camera (up and away from the viewer), so a polished patch anywhere on
-// the face has something bright to reflect.
+// Both windows sit in the hemisphere the TOP of the stone mirrors from this
+// camera (up and away from the viewer), so a clear patch anywhere reflects one.
 const vec3 WINDOW = normalize(vec3(-0.40, 0.62, -0.62));
-// A second, dimmer window on the other side so polish shows wherever you rub,
-// not only where the key light happens to land.
 const vec3 WINDOW2 = normalize(vec3(0.55, 0.50, -0.60));
-const vec3 RADII = vec3(0.46, 0.20, 0.33);
-const float GROUND = -0.20;
+const vec3 RADII = vec3(0.47, 0.17, 0.34);
+const float GROUND = -0.17;
 const float FL = 1.9;
+// Absorption per unit thickness. Red dies first, so thick glass goes teal.
+const vec3 ABSORB = vec3(3.0, 0.70, 1.0);
+const vec3 TINT = vec3(0.55, 0.86, 0.80);
 
 float hash3(vec3 p) {
   return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
@@ -1937,9 +1937,9 @@ float noise3(vec3 p) {
     mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
 }
 
-// Fixed camera: a little above the tray, looking down at the pebble.
+// Fixed camera: a little above the tray, looking down at the stone.
 vec3 camRo() { return vec3(0.0, 1.05, 1.75); }
-vec3 camF() { return normalize(vec3(0.0, -0.17, 0.04) - camRo()); }
+vec3 camF() { return normalize(vec3(0.0, -0.15, 0.04) - camRo()); }
 vec3 camR() { return normalize(cross(camF(), vec3(0.0, 1.0, 0.0))); }
 vec3 camU() { return cross(camR(), camF()); }
 
@@ -1956,20 +1956,27 @@ float sdEllipsoid(vec3 p, vec3 r) {
   return k0 * (k0 - 1.0) / k1;
 }
 
-// Shape only: what the shadow, occlusion and reflection rays march against.
+float smax(float a, float b, float k) {
+  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(a, b, h) + k * h * (1.0 - h);
+}
+
+// Shape only: the oval, a gentle asymmetry, and the thumb groove.
 float mapS(vec3 p) {
   float d = sdEllipsoid(p, RADII);
-  // Real pebbles are not symmetric. One low-frequency wobble keeps the
-  // silhouette smooth but takes the CAD look off it.
-  d += (noise3(p * 1.7 + 3.0) - 0.5) * 0.06;
+  d += (noise3(p * 1.7 + 3.0) - 0.5) * 0.045;
+  // The groove: a soft ellipsoid subtracted from the top, worn slightly off
+  // centre the way a real one is.
+  float g = sdEllipsoid(p - vec3(0.02, 0.285, 0.03), vec3(0.20, 0.155, 0.145));
+  d = smax(d, -g, 0.05);
   return d;
 }
 
-// Full shape: adds the shallow dent where the thumb rests.
+// Full shape: adds the tiny dent where the thumb is pressing right now.
 float map(vec3 p) {
   float d = mapS(p);
   vec2 s = project(p) - uThumb;
-  d += exp(-dot(s, s) * 26.0) * 0.022 * uPress;
+  d += exp(-dot(s, s) * 26.0) * 0.012 * uPress;
   return d;
 }
 
@@ -1979,6 +1986,14 @@ vec3 normalAt(vec3 p) {
     map(p + e.xyy) - map(p - e.xyy),
     map(p + e.yxy) - map(p - e.yxy),
     map(p + e.yyx) - map(p - e.yyx)));
+}
+
+vec3 normalS(vec3 p) {
+  vec2 e = vec2(0.0035, 0.0);
+  return normalize(vec3(
+    mapS(p + e.xyy) - mapS(p - e.xyy),
+    mapS(p + e.yxy) - mapS(p - e.yxy),
+    mapS(p + e.yyx) - mapS(p - e.yyx)));
 }
 
 float ambientOcclusion(vec3 p, vec3 n) {
@@ -2004,54 +2019,71 @@ float softShadow(vec3 ro, vec3 rd) {
   return clamp(res, 0.0, 1.0);
 }
 
-// The room the stone reflects: a soft gradient with one bright window.
-// Roughness blurs the window into a broad sheen instead of a sharp panel.
+// Walk a ray through the inside of the glass to the point where it leaves.
+vec3 exitPoint(vec3 p, vec3 rd) {
+  vec3 q = p + rd * 0.012;
+  for (int i = 0; i < 14; i++) {
+    float d = mapS(q);
+    if (d > 0.0) break;
+    q += rd * max(-d, 0.008) * 0.95;
+  }
+  return q;
+}
+
+// The room the stone reflects: a soft gradient with two bright windows.
 vec3 env(vec3 d, float rough) {
   vec3 sky = mix(vec3(0.80, 0.86, 0.92), vec3(0.16, 0.22, 0.30), uDark);
   vec3 trayBase = mix(vec3(0.50, 0.53, 0.57), vec3(0.05, 0.06, 0.08), uDark);
   vec3 base = mix(trayBase, sky, smoothstep(-0.25, 0.75, d.y));
   float w = max(dot(d, WINDOW), 0.0);
-  float sharp = smoothstep(0.90, 0.975, w);
-  float soft = pow(w, 5.0) * 0.55;
   float w2 = max(dot(d, WINDOW2), 0.0);
-  float sharp2 = smoothstep(0.88, 0.97, w2) * 0.6;
-  float soft2 = pow(w2, 4.0) * 0.28;
-  float win = mix(sharp + sharp2, soft + soft2, rough);
-  // Windows are several times brighter than the room, as in any real scene.
+  float sharp = smoothstep(0.90, 0.975, w) + smoothstep(0.88, 0.97, w2) * 0.6;
+  float soft = pow(w, 5.0) * 0.55 + pow(w2, 4.0) * 0.28;
+  float win = mix(sharp, soft, rough);
   return base + vec3(1.0, 0.98, 0.95) * win * mix(3.2, 2.4, uDark);
 }
 
-// Local polish at a surface point: the rub spots, in screen space.
-float localPolish(vec3 p) {
+// How clear the glass is at a surface point: the rub spots, in screen space.
+// Each spot is thumb-sized (about 30px radius on a phone) and they combine as
+// a union of coverages, not a sum — a sum let two dozen overlapping spots
+// blanket the whole stone from one small circle of rubbing.
+float clearAt(vec3 p) {
   vec2 s = project(p);
-  float acc = 0.0;
+  float remain = 1.0;
   for (int i = 0; i < ${gp}; i++) {
     vec3 r = uRub[i];
     vec2 d = s - r.xy;
-    acc += r.z * exp(-dot(d, d) * 38.0);
+    remain *= 1.0 - clamp(r.z, 0.0, 1.0) * exp(-dot(d, d) * 200.0);
   }
-  return clamp(acc, 0.0, 1.0);
+  return 1.0 - remain;
 }
 
-vec3 stoneBody(vec3 p, out vec3 veinCol) {
-  // Jade: a deep teal-green body, mineral banding that shifts hue as well as
-  // value, and fine pale veins. Everything stays inside the card's teal so the
-  // colour system holds; the contrast comes from the light, not the pigment.
-  vec3 deep = vec3(0.045, 0.19, 0.165);
-  vec3 mid = vec3(0.10, 0.40, 0.345);
-  vec3 warm = vec3(0.16, 0.42, 0.33);
-  veinCol = vec3(0.58, 0.82, 0.72);
-  float band = noise3(p * vec3(2.4, 4.2, 2.4));
-  float band2 = noise3(p * vec3(5.0, 8.0, 5.0) + 7.3);
-  vec3 body = mix(deep, mid, band);
-  body = mix(body, warm, band2 * 0.25);
-  // Veins are THREADS, not spots: the noise is stretched along the stone and
-  // squeezed across it, and the domain is warped so they curve.
-  vec3 q = p + (noise3(p * 3.1 + 5.0) - 0.5) * 0.35;
-  float vein = smoothstep(0.58, 0.66, noise3(q * vec3(2.6, 7.0, 15.0) + 2.0));
-  float vein2 = smoothstep(0.64, 0.71, noise3(q * vec3(4.0, 10.0, 26.0) + 11.0));
-  body = mix(body, veinCol, vein * 0.30 + vein2 * 0.16);
-  return body;
+// The tray. 'cheap' is the version seen THROUGH the glass: no shadow march
+// (glass throws a soft, coloured shadow anyway), plus a small caustic.
+vec3 tray(vec3 g, vec2 uv, bool cheap) {
+  vec3 n = vec3(0.0, 1.0, 0.0);
+  vec3 base = mix(vec3(0.87, 0.89, 0.91), vec3(0.075, 0.09, 0.115), uDark);
+  float diff = clamp(dot(n, LIGHT), 0.0, 1.0);
+  float sh;
+  float ao;
+  if (cheap) {
+    float r2 = dot(g.xz, g.xz);
+    sh = 1.0 - 0.30 * exp(-r2 * 5.0);
+    ao = 1.0;
+    // Light focused through the glass onto the tray beneath it.
+    base += TINT * exp(-r2 * 7.0) * mix(0.16, 0.55, uDark);
+  } else {
+    // Glass throws a lighter shadow, and a tinted one.
+    float s = softShadow(g + n * 0.02, LIGHT);
+    sh = mix(1.0, s, 0.72);
+    base = mix(base, base * TINT, (1.0 - s) * 0.45);
+    ao = ambientOcclusion(g, n);
+  }
+  vec3 col = base * (mix(0.56, 0.42, uDark) + mix(0.44, 0.58, uDark) * diff * sh) * mix(0.55, 1.0, ao);
+  vec3 horizon = mix(vec3(0.86, 0.89, 0.92), vec3(0.10, 0.13, 0.17), uDark);
+  col = mix(col, horizon, smoothstep(2.2, 7.0, length(g - camRo())));
+  col *= 1.0 - mix(0.09, 0.16, uDark) * dot(uv, uv);
+  return col;
 }
 
 void main() {
@@ -2065,7 +2097,7 @@ void main() {
   vec3 keyCol = mix(vec3(1.0, 0.97, 0.92), vec3(0.92, 0.95, 1.0), uDark * 0.5);
 
   // March the stone and the tray together. Track the closest approach so a
-  // ray that just misses the rim still gets a partial cover — that is the AA.
+  // ray that just misses the rim still gets partial cover — that is the AA.
   float t = 0.0;
   float hitT = -1.0;
   bool onGround = false;
@@ -2083,19 +2115,15 @@ void main() {
     if (t > 7.0) break;
   }
 
-  // ---- Tray -------------------------------------------------------------
+  // ---- Tray, seen directly -----------------------------------------------
   vec3 trayCol;
   {
     float tg = (GROUND - ro.y) / rd.y;
     vec3 g = ro + rd * tg;
-    vec3 n = vec3(0.0, 1.0, 0.0);
-    vec3 base = mix(vec3(0.87, 0.89, 0.91), vec3(0.075, 0.09, 0.115), uDark);
-    float sh = softShadow(g + n * 0.02, LIGHT);
-    float ao = ambientOcclusion(g, n);
-    float diff = clamp(dot(n, LIGHT), 0.0, 1.0);
-    trayCol = base * (mix(0.56, 0.42, uDark) + mix(0.44, 0.58, uDark) * diff * sh) * mix(0.55, 1.0, ao);
+    trayCol = tray(g, uv, false);
 
-    // A polished tray shows a faint, blurred image of the stone under it.
+    // A faint image of the stone in the tray.
+    vec3 n = vec3(0.0, 1.0, 0.0);
     vec3 rr = reflect(rd, n);
     float rt = 0.02;
     float rhit = -1.0;
@@ -2106,20 +2134,13 @@ void main() {
       if (rt > 1.6) break;
     }
     if (rhit > 0.0) {
-      vec3 q = g + rr * rhit;
-      vec3 vc;
-      vec3 body = stoneBody(q, vc);
       float fres = 0.03 + 0.35 * pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 3.0);
-      trayCol = mix(trayCol, body * mix(1.25, 0.9, uDark), fres * 1.6 * smoothstep(1.4, 0.2, rhit));
+      vec3 image = TINT * mix(0.9, 0.55, uDark);
+      trayCol = mix(trayCol, image, fres * 1.4 * smoothstep(1.4, 0.2, rhit));
     }
-
-    // Fade into a horizon so the tray has an end, and a quiet vignette.
-    vec3 horizon = mix(vec3(0.86, 0.89, 0.92), vec3(0.10, 0.13, 0.17), uDark);
-    trayCol = mix(trayCol, horizon, smoothstep(2.2, 7.0, tg));
-    trayCol *= 1.0 - mix(0.09, 0.16, uDark) * dot(uv, uv);
   }
 
-  // ---- Stone ------------------------------------------------------------
+  // ---- Stone --------------------------------------------------------------
   vec3 stoneCol = vec3(0.0);
   float cover = 0.0;
   bool stoneHit = hitT > 0.0 && !onGround;
@@ -2129,59 +2150,74 @@ void main() {
     cover = stoneHit ? 1.0 : 1.0 - smoothstep(0.0, px * 1.6, closest);
 
     vec3 n = normalAt(p);
-    // A raw river pebble is already a little smooth; fully matte reads as felt.
-    float polish = clamp(0.12 + localPolish(p) * 0.88 + uPolish * 0.08, 0.0, 1.0);
-    float rough = 1.0 - polish;
+    float clr = clamp(clearAt(p) * 0.95 + uPolish * 0.05, 0.0, 1.0);
+    float frost = 1.0 - clr;
 
-    // Grit is a normal perturbation only — the silhouette stays smooth.
+    // Frost is etched glass: a rough micro-surface. Normal only.
     vec3 gp = floor(p * 420.0);
     vec3 jitter = vec3(hash3(gp), hash3(gp + 19.3), hash3(gp + 47.1)) - 0.5;
-    vec3 nr = normalize(n + jitter * 0.18 * rough);
+    vec3 nf = normalize(n + jitter * 0.24 * frost);
 
-    float ndv = clamp(dot(nr, -rd), 0.0, 1.0);
-    float ndl = clamp(dot(nr, LIGHT), 0.0, 1.0);
+    float ndv = clamp(dot(n, -rd), 0.0, 1.0);
     float sh = softShadow(p + n * 0.02, LIGHT);
     float ao = ambientOcclusion(p, n);
-
-    vec3 veinCol;
-    vec3 body = stoneBody(p, veinCol);
-    // Unpolished stone is dusty: lighter, greyer, its colour hidden under the
-    // grit. Polishing brings the deep saturated body out. This is what makes a
-    // rubbed patch read even where nothing bright is being reflected.
-    vec3 dusty = mix(body, vec3(0.36, 0.46, 0.44), 0.42);
-    body = mix(body * 0.92, dusty, rough);
-
-    // Hemispheric ambient + key. Shadow side drifts cooler, not just darker.
-    vec3 amb = sky * 0.55 * (n.y * 0.5 + 0.5) + bounce * 0.30 * (0.5 - n.y * 0.5);
-    vec3 lit = body * (amb + keyCol * ndl * sh * 1.05);
-    lit = mix(lit, lit * vec3(0.85, 0.95, 1.08), (1.0 - ndl) * 0.5);
-    lit *= mix(0.55, 1.0, ao);
-
-    // Reflection of the room, Fresnel-weighted and muted by roughness.
-    // Base reflectance rises with polish (stylised: real jade is ~4%, which is
-    // too faint to show a rubbed patch head-on).
-    float f0 = mix(0.05, 0.16, polish);
-    float fres = f0 + (1.0 - f0) * pow(1.0 - ndv, 5.0);
-    vec3 refl = env(reflect(rd, nr), rough) * fres * mix(0.30, 1.0, polish);
-
-    // Key highlight: broad and dim on grit, a tight mirror when polished.
     vec3 h = normalize(LIGHT - rd);
-    float ndh = clamp(dot(nr, h), 0.0, 1.0);
-    float spec = pow(ndh, mix(14.0, 320.0, polish)) * mix(0.05, 1.2, polish) * sh;
 
-    // Translucency: light coming through the thin rim, in the vein colour.
-    float trans = pow(1.0 - ndv, 3.0) * (0.35 + 0.65 * clamp(dot(-rd, LIGHT) * 0.5 + 0.5, 0.0, 1.0));
+    // Through the glass: refract in, cross the interior, refract out.
+    vec3 rdi = refract(rd, n, 1.0 / 1.5);
+    vec3 ex = exitPoint(p, rdi);
+    float thick = length(ex - p);
+    vec3 T = exp(-thick * ABSORB);
 
-    // Mica: a few soft glints that only twinkle inside the highlight.
-    float cell = hash3(floor(p * 55.0));
-    float tw = 0.5 + 0.5 * sin(uTime * 2.2 + cell * 40.0);
-    float glint = smoothstep(0.986, 1.0, cell) * tw * pow(ndh, 24.0) * (0.35 + 0.65 * polish);
+    // ---- Frosted: milky, wrap-lit, glowing where thin.
+    float wrap = clamp((dot(nf, LIGHT) + 0.55) / 1.55, 0.0, 1.0);
+    vec3 amb = sky * 0.60 * (n.y * 0.5 + 0.5) + bounce * 0.30 * (0.5 - n.y * 0.5);
+    // Thick glass goes deeper teal even when frosted; thin edges stay pale
+    // and glow. That gradient is what says "glass" rather than "mint".
+    // In daylight sea glass is a pale, slightly milky aqua, not a mint sweet:
+    // pull the frost toward white in the light theme.
+    vec3 frostTint = mix(mix(TINT, vec3(1.0), 0.28), TINT, uDark);
+    vec3 bodyTint = mix(frostTint, frostTint * vec3(0.50, 0.80, 0.78), clamp(thick * 2.2, 0.0, 1.0));
+    vec3 frostCol = bodyTint * (amb * 0.9 + keyCol * wrap * 0.62 * mix(0.6, 1.0, sh));
+    frostCol += TINT * pow(1.0 - ndv, 2.0) * 0.52;                // rim scatter
+    frostCol += TINT * vec3(0.9, 1.0, 1.0) * exp(-thick * 3.5) * 0.38;   // light through thin parts
+    frostCol *= mix(0.6, 1.0, ao);
+    float sheen = pow(clamp(dot(nf, h), 0.0, 1.0), 10.0) * 0.14;
+    frostCol += keyCol * sheen;
+    // Etched glass sparkles very finely in the light, and the sparkle drifts.
+    float gh = hash3(floor(p * 300.0) + 3.0);
+    float grain = smoothstep(0.985, 1.0, gh) * (0.6 + 0.4 * sin(uTime * 1.7 + gh * 60.0));
+    frostCol += keyCol * grain * pow(clamp(dot(nf, h), 0.0, 1.0), 4.0) * 0.28 * frost;
 
-    stoneCol = lit + refl + keyCol * spec + veinCol * trans * 0.30 + vec3(1.0, 0.98, 0.95) * glint * 0.7;
+    // ---- Clear: the tray seen through tinted glass, plus a sharp reflection.
+    vec3 nOut = normalS(ex);
+    vec3 rdo = refract(rdi, -nOut, 1.5);
+    if (dot(rdo, rdo) < 0.001) rdo = rdi;
+    vec3 seen;
+    if (rdo.y < -0.02) {
+      float tg = (GROUND - ex.y) / rdo.y;
+      seen = tray(ex + rdo * tg, uv, true);
+    } else {
+      seen = env(rdo, 0.0) * 0.6;
+    }
+    vec3 clearCol = seen * T;
+    float fres = 0.04 + 0.96 * pow(1.0 - ndv, 5.0);
+    // Stylised: glass over a dark tray is mostly what it reflects, so the
+    // reflection carries more than physical Fresnel would give it.
+    clearCol += env(reflect(rd, n), 0.0) * fres * 1.6;
+    float spec = pow(clamp(dot(n, h), 0.0, 1.0), 380.0) * 1.3 * sh;
+    clearCol += keyCol * spec;
+    // A little light stays inside clear glass, or over a dark tray it reads
+    // as black rather than teal. Stronger in dark mode, where the tray gives
+    // it nothing.
+    clearCol += TINT * pow(1.0 - ndv, 3.0) * 0.10;
+    clearCol += TINT * mix(0.06, 0.30, uDark) * exp(-thick * 1.2);
 
-    // The thumb itself: a faint warmth under the contact, not a stain.
+    stoneCol = mix(frostCol, clearCol, smoothstep(0.0, 1.0, clr));
+
+    // The thumb itself: a faint warmth under the contact.
     vec2 sd = project(p) - uThumb;
-    stoneCol += vec3(0.10, 0.09, 0.05) * exp(-dot(sd, sd) * 30.0) * uPress;
+    stoneCol += vec3(0.08, 0.07, 0.04) * exp(-dot(sd, sd) * 30.0) * uPress;
   }
 
   vec3 col = mix(trayCol, stoneCol, cover);
@@ -2190,7 +2226,7 @@ void main() {
   col = clamp(col, 0.0, 1.0);
   gl_FragColor = vec4(col, 1.0);
 }
-`;function vp(e){let{active:t,reduceMotion:n,reduceBrightness:r,hapticsEnabled:i,onInteract:a}=e,o=(0,b.useRef)(null),[s,c]=(0,b.useState)(!0),l=(0,b.useRef)(!1),u=(0,b.useRef)({x:0,y:0}),d=(0,b.useRef)(null),f=(0,b.useRef)(0),p=(0,b.useRef)(new Float32Array(gp*3)),m=n||!s;if((0,b.useEffect)(()=>{let e=o.current;if(!e||!t||m)return;let n=Qu(e,_p);if(!n){c(!1);return}let i=0,a=0,s=0;return n.start((e,t)=>{let{gl:o,u:c}=n,{width:d,height:m}=n.size(),h=p.current;if(f.current=Math.max(0,f.current-e*.035),i+=(+!!l.current-i)*Math.min(1,e*10),a+=(u.current.x-a)*Math.min(1,e*16),s+=(u.current.y-s)*Math.min(1,e*16),l.current){let t=-1,n=.06,r=0;for(let e=0;e<gp;e++){let i=h[e*3]-a,o=h[e*3+1]-s,c=Math.hypot(i,o);c<n&&(n=c,t=e),h[e*3+2]<h[r*3+2]&&(r=e)}t<0&&(t=r,h[t*3]=a,h[t*3+1]=s,h[t*3+2]=.18),h[t*3+2]=Math.min(1,h[t*3+2]+e*1.6)}let g=Math.exp(-e*.035);for(let e=0;e<gp;e++)h[e*3+2]*=g;o.uniform2f(c(`uRes`),d,m),o.uniform2f(c(`uThumb`),a,s),o.uniform1f(c(`uPress`),i),o.uniform1f(c(`uPolish`),f.current),o.uniform1f(c(`uTime`),t),o.uniform3fv(c(`uRub[0]`),h),o.uniform1f(c(`uSoft`),+!!r),o.uniform1f(c(`uDark`),+!!Xu()),o.clearColor(0,0,0,0),o.clear(o.COLOR_BUFFER_BIT)}),()=>n.dispose()},[t,r,m]),m)return(0,H.jsx)(mf,{...e});let h=e=>{let t=e.currentTarget.getBoundingClientRect(),n=e.clientX-t.left,r=e.clientY-t.top;return{x:X((n*2-t.width)/t.height,-1.5,1.5),y:X((t.height-r*2)/t.height,-1.2,1.2)}},g=e=>{if(!t||!l.current)return;let n=h(e);if(u.current=n,d.current){let e=Math.hypot(n.x-d.current.x,n.y-d.current.y);e>.008&&(f.current=Math.min(1,f.current+e*.45),a?.(`tap`))}d.current=n};return(0,H.jsxs)(`div`,{className:`canvas-card worry-stone3d-card`,children:[(0,H.jsx)(`canvas`,{ref:o,className:`stim3d-canvas`,"aria-label":`Rub a worry stone smooth`,onPointerDown:e=>{t&&(l.current=!0,d.current=h(e),u.current=d.current,e.currentTarget.setPointerCapture(e.pointerId),Z(i,6),g(e))},onPointerMove:g,onPointerUp:()=>{l.current=!1,d.current=null},onPointerCancel:()=>{l.current=!1,d.current=null}}),(0,H.jsx)(`p`,{children:`Rub slow circles. Watch it polish where your thumb goes.`})]})}var yp=[{key:`rain`,label:`Rain`},{key:`brown`,label:`Brown noise`},{key:`fire`,label:`Fire crackle`},{key:`fan`,label:`Soft fan`}],bp=e=>({rain:e.rain/100,brown:e.brown/100,fire:e.fire/100,fan:e.fan/100}),xp=[{name:`Rainforest`,layers:{rain:55,brown:24,fire:0,fan:0}},{name:`Campfire`,layers:{rain:12,brown:18,fire:62,fan:0}},{name:`Cabin fan`,layers:{rain:0,brown:22,fire:0,fan:50}},{name:`Downpour`,layers:{rain:82,brown:30,fire:0,fan:8}}];function Sp({id:e,active:t,muted:n,onInteract:r}){let[i,a]=(0,b.useState)({rain:35,brown:20,fire:0,fan:0}),o=(0,b.useRef)(i);(0,b.useEffect)(()=>{o.current=i},[i]),(0,b.useEffect)(()=>{if(!t||n){Y.releaseBed(e);return}return Y.resume().then(()=>{Y.setBed(e,bp(o.current))}),()=>Y.releaseBed(e)},[t,e,n]),(0,b.useEffect)(()=>{!t||n||Y.setBed(e,bp(i))},[i,t,e,n]);let s=(e,t)=>{r?.(t>0&&!n?`sound`:`tap`),a(n=>({...n,[e]:t}))},c=e=>{r?.(n?`tap`:`sound`),a(e)},l=xp.find(e=>Object.keys(e.layers).every(t=>e.layers[t]===i[t]))?.name;return(0,H.jsxs)(`div`,{className:`mixer-card`,children:[(0,H.jsx)(`div`,{className:`rain-visual`,"aria-hidden":`true`,"data-quiet":i.rain<20,children:Array.from({length:18},(e,t)=>(0,H.jsx)(`span`,{style:{"--delay":`${t*.16}s`}},t))}),(0,H.jsx)(`div`,{className:`recipe-row`,role:`group`,"aria-label":`Sound recipes`,children:xp.map(e=>(0,H.jsx)(`button`,{type:`button`,className:l===e.name?`recipe-chip active`:`recipe-chip`,onClick:()=>c(e.layers),children:e.name},e.name))}),yp.map(({key:e,label:t})=>(0,H.jsxs)(`label`,{children:[t,(0,H.jsx)(`input`,{type:`range`,min:`0`,max:`100`,value:i[e],onChange:t=>s(e,Number(t.currentTarget.value))})]},e)),(0,H.jsx)(`p`,{children:n?`Sound is off.`:`Every layer is local and procedural — no audio files.`})]})}var Cp=`M 10 50 C 22 18, 38 18, 50 40 S 78 78, 90 46 S 70 14, 50 30 S 22 70, 10 50`;function wp({active:e,hapticsEnabled:t,reduceMotion:n,onInteract:r}){let i=(0,b.useRef)(null),a=(0,b.useRef)(null),[o,s]=(0,b.useState)({x:10,y:50}),[c,l]=(0,b.useState)(null),[u,d]=(0,b.useState)(!1),f=(0,b.useRef)(null),p=(0,b.useRef)(!1);(0,b.useEffect)(()=>{if(!e)return;let r=i.current;if(!r)return;let a=r.getTotalLength(),o=0,c=0,l=n?.18:.42,u=()=>{if(!document.hidden){o=(o+l)%a;let e=r.getPointAtLength(o);s({x:e.x,y:e.y});let n=f.current;if(n){let r=Math.hypot(n.x-e.x,n.y-e.y)<12;r!==p.current&&(p.current=r,d(r),r&&Z(t,8))}}c=requestAnimationFrame(u)};return c=requestAnimationFrame(u),()=>cancelAnimationFrame(c)},[e,n,t]);let m=e=>{let t=a.current;if(!t)return;let n=t.getBoundingClientRect(),r={x:(e.clientX-n.left)/n.width*100,y:(e.clientY-n.top)/n.height*100};f.current=r,l(r)};return(0,H.jsxs)(`div`,{className:u?`path-trace-card on-track`:`path-trace-card`,children:[(0,H.jsxs)(`svg`,{ref:a,viewBox:`0 0 100 100`,className:`path-trace-svg`,preserveAspectRatio:`xMidYMid meet`,"aria-label":`Keep your finger on the moving dot along the path`,onPointerDown:t=>{e&&(r?.(`tap`),t.currentTarget.setPointerCapture(t.pointerId),m(t))},onPointerMove:t=>{e&&m(t)},onPointerUp:()=>{f.current=null,l(null),d(!1),p.current=!1},onPointerCancel:()=>{f.current=null,l(null),d(!1),p.current=!1},children:[(0,H.jsx)(`path`,{ref:i,d:Cp,className:`path-trace-line`,fill:`none`}),c&&(0,H.jsx)(`circle`,{cx:c.x,cy:c.y,r:`5.5`,className:`path-trace-finger`}),(0,H.jsx)(`circle`,{cx:o.x,cy:o.y,r:`4`,className:`path-trace-guide`})]}),(0,H.jsx)(`p`,{children:u?`Locked on — stay with it.`:`Keep your finger on the glowing dot.`})]})}var Tp=[{key:`ridges`,label:`Ridges`,haptic:[5,9,5,9,5,9]},{key:`soft`,label:`Soft`,haptic:[22]},{key:`rough`,label:`Rough`,haptic:[3,5,3,5,3,5,3,5]},{key:`smooth`,label:`Smooth`,haptic:[11]},{key:`bumps`,label:`Bumps`,haptic:[7,26,7]}],Ep=`
+`;function vp(e){let{active:t,reduceMotion:n,reduceBrightness:r,hapticsEnabled:i,onInteract:a}=e,o=(0,b.useRef)(null),[s,c]=(0,b.useState)(!0),l=(0,b.useRef)(!1),u=(0,b.useRef)({x:0,y:0}),d=(0,b.useRef)(null),f=(0,b.useRef)(0),p=(0,b.useRef)(new Float32Array(gp*3)),m=n||!s;if((0,b.useEffect)(()=>{let e=o.current;if(!e||!t||m)return;let n=Qu(e,_p);if(!n){c(!1);return}let i=0,a=0,s=0;return n.start((e,t)=>{let{gl:o,u:c}=n,{width:d,height:m}=n.size(),h=p.current;if(f.current=Math.max(0,f.current-e*.035),i+=(+!!l.current-i)*Math.min(1,e*10),a+=(u.current.x-a)*Math.min(1,e*16),s+=(u.current.y-s)*Math.min(1,e*16),l.current){let t=-1,n=.05,r=0;for(let e=0;e<gp;e++){let i=h[e*3]-a,o=h[e*3+1]-s,c=Math.hypot(i,o);c<n&&(n=c,t=e),h[e*3+2]<h[r*3+2]&&(r=e)}t<0&&(t=r,h[t*3]=a,h[t*3+1]=s,h[t*3+2]=.18),h[t*3+2]=Math.min(1,h[t*3+2]+e*1.1)}let g=Math.exp(-e*.03);for(let e=0;e<gp;e++)h[e*3+2]*=g;o.uniform2f(c(`uRes`),d,m),o.uniform2f(c(`uThumb`),a,s),o.uniform1f(c(`uPress`),i),o.uniform1f(c(`uPolish`),f.current),o.uniform1f(c(`uTime`),t),o.uniform3fv(c(`uRub[0]`),h),o.uniform1f(c(`uSoft`),+!!r),o.uniform1f(c(`uDark`),+!!Xu()),o.clearColor(0,0,0,0),o.clear(o.COLOR_BUFFER_BIT)}),()=>n.dispose()},[t,r,m]),m)return(0,H.jsx)(mf,{...e});let h=e=>{let t=e.currentTarget.getBoundingClientRect(),n=e.clientX-t.left,r=e.clientY-t.top;return{x:X((n*2-t.width)/t.height,-1.5,1.5),y:X((t.height-r*2)/t.height,-1.2,1.2)}},g=e=>{if(!t||!l.current)return;let n=h(e);if(u.current=n,d.current){let e=Math.hypot(n.x-d.current.x,n.y-d.current.y);e>.008&&(f.current=Math.min(1,f.current+e*.45),a?.(`tap`))}d.current=n};return(0,H.jsxs)(`div`,{className:`canvas-card worry-stone3d-card`,children:[(0,H.jsx)(`canvas`,{ref:o,className:`stim3d-canvas`,"aria-label":`Rub the frost off a piece of sea glass`,onPointerDown:e=>{t&&(l.current=!0,d.current=h(e),u.current=d.current,e.currentTarget.setPointerCapture(e.pointerId),Z(i,6),g(e))},onPointerMove:g,onPointerUp:()=>{l.current=!1,d.current=null},onPointerCancel:()=>{l.current=!1,d.current=null}}),(0,H.jsx)(`p`,{children:`Rub slow circles. The frost wears clear where your thumb goes.`})]})}var yp=[{key:`rain`,label:`Rain`},{key:`brown`,label:`Brown noise`},{key:`fire`,label:`Fire crackle`},{key:`fan`,label:`Soft fan`}],bp=e=>({rain:e.rain/100,brown:e.brown/100,fire:e.fire/100,fan:e.fan/100}),xp=[{name:`Rainforest`,layers:{rain:55,brown:24,fire:0,fan:0}},{name:`Campfire`,layers:{rain:12,brown:18,fire:62,fan:0}},{name:`Cabin fan`,layers:{rain:0,brown:22,fire:0,fan:50}},{name:`Downpour`,layers:{rain:82,brown:30,fire:0,fan:8}}];function Sp({id:e,active:t,muted:n,onInteract:r}){let[i,a]=(0,b.useState)({rain:35,brown:20,fire:0,fan:0}),o=(0,b.useRef)(i);(0,b.useEffect)(()=>{o.current=i},[i]),(0,b.useEffect)(()=>{if(!t||n){Y.releaseBed(e);return}return Y.resume().then(()=>{Y.setBed(e,bp(o.current))}),()=>Y.releaseBed(e)},[t,e,n]),(0,b.useEffect)(()=>{!t||n||Y.setBed(e,bp(i))},[i,t,e,n]);let s=(e,t)=>{r?.(t>0&&!n?`sound`:`tap`),a(n=>({...n,[e]:t}))},c=e=>{r?.(n?`tap`:`sound`),a(e)},l=xp.find(e=>Object.keys(e.layers).every(t=>e.layers[t]===i[t]))?.name;return(0,H.jsxs)(`div`,{className:`mixer-card`,children:[(0,H.jsx)(`div`,{className:`rain-visual`,"aria-hidden":`true`,"data-quiet":i.rain<20,children:Array.from({length:18},(e,t)=>(0,H.jsx)(`span`,{style:{"--delay":`${t*.16}s`}},t))}),(0,H.jsx)(`div`,{className:`recipe-row`,role:`group`,"aria-label":`Sound recipes`,children:xp.map(e=>(0,H.jsx)(`button`,{type:`button`,className:l===e.name?`recipe-chip active`:`recipe-chip`,onClick:()=>c(e.layers),children:e.name},e.name))}),yp.map(({key:e,label:t})=>(0,H.jsxs)(`label`,{children:[t,(0,H.jsx)(`input`,{type:`range`,min:`0`,max:`100`,value:i[e],onChange:t=>s(e,Number(t.currentTarget.value))})]},e)),(0,H.jsx)(`p`,{children:n?`Sound is off.`:`Every layer is local and procedural — no audio files.`})]})}var Cp=`M 10 50 C 22 18, 38 18, 50 40 S 78 78, 90 46 S 70 14, 50 30 S 22 70, 10 50`;function wp({active:e,hapticsEnabled:t,reduceMotion:n,onInteract:r}){let i=(0,b.useRef)(null),a=(0,b.useRef)(null),[o,s]=(0,b.useState)({x:10,y:50}),[c,l]=(0,b.useState)(null),[u,d]=(0,b.useState)(!1),f=(0,b.useRef)(null),p=(0,b.useRef)(!1);(0,b.useEffect)(()=>{if(!e)return;let r=i.current;if(!r)return;let a=r.getTotalLength(),o=0,c=0,l=n?.18:.42,u=()=>{if(!document.hidden){o=(o+l)%a;let e=r.getPointAtLength(o);s({x:e.x,y:e.y});let n=f.current;if(n){let r=Math.hypot(n.x-e.x,n.y-e.y)<12;r!==p.current&&(p.current=r,d(r),r&&Z(t,8))}}c=requestAnimationFrame(u)};return c=requestAnimationFrame(u),()=>cancelAnimationFrame(c)},[e,n,t]);let m=e=>{let t=a.current;if(!t)return;let n=t.getBoundingClientRect(),r={x:(e.clientX-n.left)/n.width*100,y:(e.clientY-n.top)/n.height*100};f.current=r,l(r)};return(0,H.jsxs)(`div`,{className:u?`path-trace-card on-track`:`path-trace-card`,children:[(0,H.jsxs)(`svg`,{ref:a,viewBox:`0 0 100 100`,className:`path-trace-svg`,preserveAspectRatio:`xMidYMid meet`,"aria-label":`Keep your finger on the moving dot along the path`,onPointerDown:t=>{e&&(r?.(`tap`),t.currentTarget.setPointerCapture(t.pointerId),m(t))},onPointerMove:t=>{e&&m(t)},onPointerUp:()=>{f.current=null,l(null),d(!1),p.current=!1},onPointerCancel:()=>{f.current=null,l(null),d(!1),p.current=!1},children:[(0,H.jsx)(`path`,{ref:i,d:Cp,className:`path-trace-line`,fill:`none`}),c&&(0,H.jsx)(`circle`,{cx:c.x,cy:c.y,r:`5.5`,className:`path-trace-finger`}),(0,H.jsx)(`circle`,{cx:o.x,cy:o.y,r:`4`,className:`path-trace-guide`})]}),(0,H.jsx)(`p`,{children:u?`Locked on — stay with it.`:`Keep your finger on the glowing dot.`})]})}var Tp=[{key:`ridges`,label:`Ridges`,haptic:[5,9,5,9,5,9]},{key:`soft`,label:`Soft`,haptic:[22]},{key:`rough`,label:`Rough`,haptic:[3,5,3,5,3,5,3,5]},{key:`smooth`,label:`Smooth`,haptic:[11]},{key:`bumps`,label:`Bumps`,haptic:[7,26,7]}],Ep=`
 precision highp float;
 uniform vec2 uRes;
 uniform vec2 uTouch;    // 0..1 strip space
