@@ -2,7 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover lets the app paint under the notch and home
+         indicator once installed; the CSS then pads with env(safe-area-inset-*).
+         Without it iOS letterboxes a standalone app with bars top and bottom. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- Installed-app behaviour. Without apple-mobile-web-app-capable, Add to
+         Home Screen on iPhone opens Lumina INSIDE Safari with the address bar —
+         the manifest's display:standalone is not enough on iOS. The translucent
+         status bar is what lets the app run edge to edge (paired with the
+         safe-area padding in index.css). -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Lumina" />
 
     <title>Lumina | Calm Stim Feed</title>
     <meta
@@ -51,8 +64,8 @@
       name="twitter:image"
       content="https://duckthetiler-max.github.io/lumina-app/og-card.png"
     />
-    <script type="module" crossorigin src="/lumina-app/assets/index-DKC0MBdM.js"></script>
-    <link rel="stylesheet" crossorigin href="/lumina-app/assets/index-CUMlsCT4.css">
+    <script type="module" crossorigin src="/lumina-app/assets/index-mI6zkHpL.js"></script>
+    <link rel="stylesheet" crossorigin href="/lumina-app/assets/index-BPkyvgfG.css">
   <link rel="manifest" href="/lumina-app/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/lumina-app/registerSW.js"></script></head>
   <body>
     <div id="root"></div>
