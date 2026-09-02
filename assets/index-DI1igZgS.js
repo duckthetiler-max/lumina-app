@@ -2292,30 +2292,30 @@ void main() {
   float fog = fbm(uv * 1.7 + vec2(uTime * 0.025, -uTime * 0.018));
   float od = length(uv - uOrb);
   float orbLight = exp(-od * 2.4) * (0.55 + 0.45 * uLock);
-  col += glow * fog * orbLight * mix(0.10, 0.32, uDark);
+  col += glow * fog * orbLight * mix(0.07, 0.22, uDark);
 
   // The track: a glass tube. A cylinder normal gives it a real highlight.
   float inside = smoothstep(W, W * 0.35, d);
   float nz = sqrt(max(0.0, 1.0 - (d * d) / (W * W)));
   float shade = 0.55 + 0.45 * nz;
   float hi = pow(clamp(1.0 - abs(d - W * 0.32) / (W * 0.26), 0.0, 1.0), 2.0);
-  float trackAmt = (0.55 + 0.45 * uCharge) * uFade;
-  vec3 tube = mix(glow * mix(0.85, 1.05, uDark), hot, hi * 0.5) * shade;
-  col = mix(col, tube, inside * trackAmt * mix(0.9, 1.0, uDark));
-  col += glow * exp(-max(d - W, 0.0) * 22.0) * mix(0.10, 0.22, uDark) * trackAmt;
+  float trackAmt = (0.45 + 0.40 * uCharge) * uFade;
+  vec3 tube = mix(glow * mix(0.70, 0.95, uDark), hot, hi * 0.35) * shade;
+  col = mix(col, tube, inside * trackAmt * mix(0.85, 1.0, uDark));
+  col += glow * exp(-max(d - W, 0.0) * 22.0) * mix(0.06, 0.15, uDark) * trackAmt;
 
   // The comet tail: the track brightens behind the light and fades along it.
   float behind = fract(uOrbProg - prog);
   float tailLen = mix(9.0, 5.0, uLock);
   float tail = exp(-behind * tailLen) * step(behind, 0.5);
-  col += mix(glow, hot, 0.35) * tail * (inside * 0.9 + exp(-max(d - W, 0.0) * 30.0) * 0.35) * uFade * (0.7 + 0.5 * uLock);
+  col += mix(glow, hot, 0.25) * tail * (inside * 0.8 + exp(-max(d - W, 0.0) * 30.0) * 0.25) * uFade * (0.40 + 0.35 * uLock);
 
   // The light itself.
   float core = exp(-od * od * 2600.0);
-  float halo = exp(-od * od * 140.0) * (0.55 + 0.45 * uLock);
-  float aura = exp(-od * od * 28.0) * 0.28 * uLock;
-  col += hot * core * 1.4 * uFade;
-  col += glow * (halo + aura) * uFade;
+  float halo = exp(-od * od * 140.0) * (0.35 + 0.35 * uLock);
+  float aura = exp(-od * od * 28.0) * 0.18 * uLock;
+  col += hot * core * mix(0.65, 1.0, uDark) * uFade;
+  col += glow * (halo + aura) * mix(0.7, 1.0, uDark) * uFade;
 
   // The finger: a faint ring that fades away once you are on the light.
   float fr = abs(length(uv - uThumb) - 0.085);
